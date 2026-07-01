@@ -2,6 +2,7 @@ package com.smartwarehouse.api.mapper;
 
 import com.smartwarehouse.api.dto.WorkerRequestDto;
 import com.smartwarehouse.api.dto.WorkerResponseDto;
+import com.smartwarehouse.api.entity.Role;
 import com.smartwarehouse.api.entity.Worker;
 import org.springframework.stereotype.Component;
 
@@ -30,7 +31,7 @@ public class WorkerMapper {
         Worker worker = new Worker();
         worker.setFirstName(dto.getFirstName());
         worker.setLastName(dto.getLastName());
-        worker.setRole(Worker.Role.valueOf(dto.getRole().toUpperCase()));
+        worker.setRole(dto.getRole());
 
         return worker;
     }

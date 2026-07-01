@@ -10,6 +10,8 @@ import com.smartwarehouse.api.repository.ShelfRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 @Service
 public class ProductService {
 
@@ -25,21 +27,55 @@ public class ProductService {
 
     @Transactional
     public ProductResponseDto addProduct(ProductRequestDto request) {
-        if (productRepository.findBySku(request.getSku()).isPresent()) {
-            throw new RuntimeException("Bu SKU koduna sahip bir ürün zaten mevcut!");
-        }
-
         Shelf shelf = shelfRepository.findById(request.getShelfId())
                 .orElseThrow(() -> new RuntimeException("Belirtilen raf bulunamadı!"));
 
-        if (request.getStockQuantity() < 0) {
-            throw new RuntimeException("Stok miktarı sıfırdan küçük olamaz!");
-        }
+        String sku = "SKU-" + java.util.UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
         Product product = productMapper.toEntity(request, shelf);
+        product.setSku(sku);
+        product.setQrCodeData("QR-" + sku);
+        product.setStockQuantity(request.getStockQuantity());
 
-        Product savedProduct = productRepository.save(product);
+        return productMapper.toResponseDto(productRepository.save(product));
+    }
 
-        return productMapper.toResponseDto(savedProduct);
+    public ProductResponseDto getProduct(Long id) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Ürün bulunamadı!"));
+        return productMapper.toResponseDto(product);
+    }
+
+    @Transactional
+    public ProductResponseDto updateProduct(Long id, ProductRequestDto request) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Ürün bulunamadı!"));
+
+        product.setName(request.getName());
+        product.setStockQuantity(request.getStockQuantity());
+        return productMapper.toResponseDto(productRepository.save(product));
+    }
+
+    @Transactional
+    public void deleteProduct(Long id) {
+        if (!productRepository.existsById(id)) {
+            throw new RuntimeException("Silinecek ürün bulunamadı!");
+        }
+        productRepository.deleteById(id);
+    }
+    @Transactional
+    public List<ProductResponseDto> getProductsByShelf(Long shelfId) {
+        Shelf shelf = shelfRepository.findById(shelfId)
+                .orElseThrow(() -> new RuntimeException("Raf bulunamadı!"));
+
+        return shelf.getProducts().stream()
+                .map(productMapper::toResponseDto)
+                .toList();
+    }
+    @Transactional
+    public String getShelfLocation(Long shelfId) {
+        Shelf shelf = shelfRepository.findById(shelfId)
+                .orElseThrow(() -> new RuntimeException("Raf bulunamadı!"));
+        return "X: " + shelf.getCoordinateX() + ", Y: " + shelf.getCoordinateY();
     }
 }

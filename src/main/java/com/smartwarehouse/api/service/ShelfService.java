@@ -8,6 +8,9 @@ import com.smartwarehouse.api.repository.ShelfRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Service
 public class ShelfService {
 
@@ -29,5 +32,25 @@ public class ShelfService {
         Shelf savedShelf = shelfRepository.save(shelf);
 
         return shelfMapper.toResponseDto(savedShelf);
+    }
+
+    @Transactional
+    public List<ShelfResponseDto> createShelfMatrix(int rows, int cols) {
+        List<Shelf> shelves = new ArrayList<>();
+        for (int i = 1; i <= rows; i++) {
+            for (int j = 1; j <= cols; j++) {
+                String shelfCode = "R" + i + "-C" + j;
+                if (shelfRepository.findByShelfCode(shelfCode).isPresent()) {
+                    continue;
+                }
+                Shelf shelf = new Shelf();
+                shelf.setShelfCode(shelfCode);
+                shelf.setCoordinateX(i);
+                shelf.setCoordinateY(j);
+                shelves.add(shelf);
+            }
+        }
+        shelfRepository.saveAll(shelves);
+        return shelves.stream().map(shelfMapper::toResponseDto).toList();
     }
 }
