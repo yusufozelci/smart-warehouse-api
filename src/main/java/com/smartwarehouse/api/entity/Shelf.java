@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import java.util.List;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 @EqualsAndHashCode(callSuper = true)
 @Entity
@@ -25,6 +26,7 @@ public class Shelf extends BaseEntity{
     @Column(nullable = false)
     private Integer coordinateY;
 
-    @OneToMany(mappedBy = "shelf")
+    @OneToMany(mappedBy = "shelf", fetch = FetchType.LAZY)
+    @JsonIgnore
     private List<Product> products;
 }

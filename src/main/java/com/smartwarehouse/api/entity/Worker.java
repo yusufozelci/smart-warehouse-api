@@ -21,6 +21,9 @@ import java.util.List;
 public class Worker extends BaseEntity implements UserDetails {
 
     @Column(nullable = false)
+    private String username;
+
+    @Column(nullable = false)
     private String firstName;
 
     @Column(nullable = false)

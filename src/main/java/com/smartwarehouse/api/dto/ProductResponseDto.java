@@ -13,6 +13,4 @@ public class ProductResponseDto {
     private int stockQuantity;
     private String shelfCode;
     private LocalDateTime createdAt;
-
-
 }
