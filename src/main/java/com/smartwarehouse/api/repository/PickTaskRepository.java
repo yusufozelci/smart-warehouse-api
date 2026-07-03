@@ -11,4 +11,5 @@ import java.util.List;
 @Repository
 public interface PickTaskRepository extends JpaRepository<PickTask, Long> {
     List<PickTask> findByAssignedWorkerAndStatus(Worker worker, TaskStatus status);
+    List<PickTask> findByStatus(TaskStatus status);
 }
