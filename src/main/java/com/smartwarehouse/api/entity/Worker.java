@@ -46,7 +46,6 @@ public class Worker extends BaseEntity implements UserDetails {
 
     @Override
     public String getUsername() {
-        // email'i kullanıcı adı olarak kullanıyoruz
         return email;
     }
 

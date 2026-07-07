@@ -5,6 +5,8 @@ import com.smartwarehouse.api.dto.ShelfResponseDto;
 import com.smartwarehouse.api.entity.Shelf;
 import com.smartwarehouse.api.mapper.ShelfMapper;
 import com.smartwarehouse.api.repository.ShelfRepository;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,7 +24,13 @@ public class ShelfService {
         this.shelfMapper = shelfMapper;
     }
 
+    @Cacheable(value = "shelves")
+    public List<Shelf> getAllShelves() {
+        return shelfRepository.findAll();
+    }
+
     @Transactional
+    @CacheEvict(value = "shelves", allEntries = true)
     public ShelfResponseDto addShelf(ShelfRequestDto request) {
         if (shelfRepository.findByShelfCode(request.getShelfCode()).isPresent()) {
             throw new RuntimeException("Bu raf kodu sistemde zaten mevcut!");
@@ -33,8 +41,8 @@ public class ShelfService {
 
         return shelfMapper.toResponseDto(savedShelf);
     }
-
     @Transactional
+    @CacheEvict(value = "shelves", allEntries = true)
     public List<ShelfResponseDto> createShelfMatrix(int rows, int cols) {
         List<Shelf> shelves = new ArrayList<>();
         for (int i = 1; i <= rows; i++) {

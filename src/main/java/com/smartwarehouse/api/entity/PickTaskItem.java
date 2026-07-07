@@ -10,11 +10,11 @@ import lombok.EqualsAndHashCode;
 @Data
 public class PickTaskItem extends BaseEntity {
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "pick_task_id", nullable = false)
     private PickTask pickTask;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 

@@ -22,7 +22,6 @@ class RouteOptimizationServiceTest {
 
     @Test
     void calculateShortestPathDijkstra_ShouldReturnCorrectPath() {
-        // 1. Veri Hazırlığı (Arrange)
         Shelf startShelf = new Shelf();
         startShelf.setId(1L);
         startShelf.setCoordinateX(0);
