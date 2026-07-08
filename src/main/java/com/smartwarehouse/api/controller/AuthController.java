@@ -38,7 +38,6 @@ public class AuthController {
         worker.setEmail(request.getEmail());
         worker.setUsername(request.getEmail());
         worker.setPassword(passwordEncoder.encode(request.getPassword()));
-
         worker.setRole(request.getRole() != null ? request.getRole() : Role.WORKER);
 
         workerRepository.save(worker);
@@ -47,11 +46,15 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<AuthResponseDto> login(@RequestBody AuthRequestDto request) {
+        System.out.println("Giriş Denemesi: " + request.getEmail());
+        System.out.println("Gelen Şifre: '" + request.getPassword() + "'");
+
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
         );
+        Worker worker = workerRepository.findByEmail(request.getEmail()).orElseThrow();
 
-        String token = jwtService.generateToken(request.getEmail());
+        String token = jwtService.generateToken(worker);
         return ResponseEntity.ok(new AuthResponseDto(token));
     }
 }
