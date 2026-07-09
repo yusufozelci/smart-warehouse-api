@@ -128,4 +128,36 @@ public class PickTaskService {
 
         pickTaskRepository.save(task);
     }
+    @Transactional(readOnly = true)
+    public List<PickTask> findAllTasks() {
+        return pickTaskRepository.findAll();
+    }
+    @Transactional(readOnly = true)
+    public List<PickTask> getPendingTasksForWorker(Worker worker) {
+        return pickTaskRepository.findByAssignedWorkerAndStatus(worker, TaskStatus.PENDING);
+    }
+    @Transactional
+    public PickTaskResponseDto completePickTask(Long taskId) {
+        PickTask task = pickTaskRepository.findById(taskId)
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı! ID: " + taskId));
+
+        if (task.getStatus() == TaskStatus.COMPLETED) {
+            throw new RuntimeException("Bu görev zaten tamamlanmış!");
+        }
+
+        task.setStatus(TaskStatus.COMPLETED);
+
+        for (PickTaskItem item : task.getItems()) {
+            item.setPicked(true);
+
+        }
+
+        PickTask savedTask = pickTaskRepository.save(task);
+        return pickTaskMapper.toResponseDto(savedTask);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PickTask> getCompletedTasksForWorker(Worker worker) {
+        return pickTaskRepository.findByAssignedWorkerAndStatus(worker, TaskStatus.COMPLETED);
+    }
 }

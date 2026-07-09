@@ -21,6 +21,7 @@ public class PickTaskItemMapper {
             dto.setProductId(item.getProduct().getId());
             dto.setProductName(item.getProduct().getName());
             dto.setSku(item.getProduct().getSku());
+            dto.setStockQuantity(item.getProduct().getStockQuantity());
 
             if (item.getProduct().getShelf() != null) {
                 dto.setShelfCode(item.getProduct().getShelf().getShelfCode());

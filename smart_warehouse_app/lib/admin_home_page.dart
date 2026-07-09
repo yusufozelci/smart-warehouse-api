@@ -12,15 +12,23 @@ class AdminHomePage extends StatelessWidget {
         title: const Text("Yönetici Paneli"),
         backgroundColor: Colors.redAccent,
         actions: [
-          IconButton(icon: const Icon(Icons.logout), onPressed: () async {
-            await AuthService().logout();
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => LoginPage()));
-          })
+          IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () async {
+                await AuthService().logout();
+                Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (context) => LoginPage())
+                );
+              }
+          )
         ],
       ),
       body: GridView.count(
         crossAxisCount: 2,
         padding: const EdgeInsets.all(20),
+        mainAxisSpacing: 20,
+        crossAxisSpacing: 20,
         children: [
           _buildStatCard("Toplam Ürün", "1,250", Icons.inventory, Colors.orange),
           _buildStatCard("Aktif Personel", "12", Icons.people, Colors.blue),
@@ -33,10 +41,12 @@ class AdminHomePage extends StatelessWidget {
 
   Widget _buildStatCard(String title, String value, IconData icon, Color color) {
     return Card(
+      elevation: 4,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(icon, size: 40, color: color),
+          const SizedBox(height: 10),
           Text(title, style: const TextStyle(fontSize: 16)),
           Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
         ],

@@ -25,22 +25,19 @@ class LoginPage extends StatelessWidget {
             ElevatedButton(
               onPressed: () async {
                 bool success = await _auth.login(_userCtrl.text, _passCtrl.text);
+
                 if (success) {
                   SharedPreferences prefs = await SharedPreferences.getInstance();
                   String? role = prefs.getString('role');
+                  int? workerId = prefs.getInt('workerId');
+                  print("Giriş yapan Worker ID: $workerId");
 
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Giriş Başarılı!")));
 
                   if (role == 'ADMIN') {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const AdminHomePage()),
-                    );
+                    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AdminHomePage()));
                   } else {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const WorkerHomePage()),
-                    );
+                    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const WorkerHomePage()));
                   }
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Giriş Başarısız!")));

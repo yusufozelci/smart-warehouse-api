@@ -14,14 +14,27 @@ class AuthService {
     );
 
     if (response.statusCode == 200) {
-      String token = jsonDecode(response.body)['token'];
+      final responseBody = jsonDecode(response.body);
+      String token = responseBody['token'];
 
-      // Token içeriğini kontrol etme
       Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
       print("DEBUG - Token içeriği: $decodedToken");
 
+      int? workerId = responseBody['workerId'] ?? decodedToken['workerId'] ?? decodedToken['id'];
+
       SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.setString('token', token);
+
+      if (workerId != null) {
+        await prefs.setInt('workerId', workerId);
+        print("DEBUG - Kaydedilen Worker ID: $workerId");
+      } else {
+        print("UYARI: workerId bulunamadı! Backend ayarlarını kontrol edin.");
+      }
+
+      String workerName = responseBody['name'] ?? decodedToken['name'] ?? decodedToken['sub'] ?? 'Saha Personeli';
+      await prefs.setString('workerName', workerName);
+      print("DEBUG - Kaydedilen İsim: $workerName");
 
       String role = decodedToken['role'] ?? 'WORKER';
       await prefs.setString('role', role);

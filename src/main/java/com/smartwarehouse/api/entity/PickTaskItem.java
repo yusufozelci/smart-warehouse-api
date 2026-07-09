@@ -1,5 +1,6 @@
 package com.smartwarehouse.api.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -11,6 +12,7 @@ import lombok.EqualsAndHashCode;
 public class PickTaskItem extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
+    @JsonIgnore
     @JoinColumn(name = "pick_task_id", nullable = false)
     private PickTask pickTask;
 

@@ -21,9 +21,6 @@ public class Product extends BaseEntity {
     private String sku;
 
     @Column(nullable = false)
-    private String qrCodeData;
-
-    @Column(nullable = false)
     private Integer stockQuantity;
 
     @ManyToOne(fetch = FetchType.LAZY)

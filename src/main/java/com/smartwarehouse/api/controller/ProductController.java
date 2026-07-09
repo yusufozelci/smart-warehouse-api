@@ -43,9 +43,6 @@ public class ProductController {
         if (newProduct.getSku() == null || newProduct.getSku().isEmpty()) {
             newProduct.setSku(UUID.randomUUID().toString().substring(0, 8).toUpperCase());
         }
-        if (newProduct.getQrCodeData() == null || newProduct.getQrCodeData().isEmpty()) {
-            newProduct.setQrCodeData("QR-" + UUID.randomUUID().toString().substring(0, 8));
-        }
 
         Product savedProduct = productRepository.save(newProduct);
         return new ResponseEntity<>(productMapper.toResponseDto(savedProduct), HttpStatus.CREATED);

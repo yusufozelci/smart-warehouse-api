@@ -7,4 +7,6 @@ import lombok.Data;
 @AllArgsConstructor
 public class AuthResponseDto {
     private String token;
+    private Long workerId;
+    private String name;
 }

@@ -11,5 +11,6 @@ public class PickTaskItemResponseDto {
     private int quantity;
     private String shelfCode;
     private boolean isPicked;
+    private int stockQuantity;
 
 }

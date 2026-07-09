@@ -34,7 +34,6 @@ public class ProductService {
 
         Product product = productMapper.toEntity(request, shelf);
         product.setSku(sku);
-        product.setQrCodeData("QR-" + sku);
         product.setStockQuantity(request.getStockQuantity());
 
         return productMapper.toResponseDto(productRepository.save(product));
