@@ -9,14 +9,17 @@ import com.smartwarehouse.api.mapper.PickTaskMapper;
 import com.smartwarehouse.api.repository.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
-import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class PickTaskService {
 
     private final PickTaskRepository pickTaskRepository;
+    private final SimpMessagingTemplate messagingTemplate;
     private final PickTaskItemRepository pickTaskItemRepository;
     private final ProductRepository productRepository;
     private final WorkerRepository workerRepository;
@@ -26,7 +29,7 @@ public class PickTaskService {
     private final TaskSortingService taskSortingService;
     private final RouteOptimizationService routeOptimizationService;
 
-    public PickTaskService(PickTaskRepository pickTaskRepository, PickTaskItemRepository pickTaskItemRepository,
+    public PickTaskService(PickTaskRepository pickTaskRepository, SimpMessagingTemplate messagingTemplate, PickTaskItemRepository pickTaskItemRepository,
                            ProductRepository productRepository,
                            WorkerRepository workerRepository,
                            ShelfRepository shelfRepository,
@@ -34,6 +37,7 @@ public class PickTaskService {
                            TaskSortingService taskSortingService,
                            RouteOptimizationService routeOptimizationService) {
         this.pickTaskRepository = pickTaskRepository;
+        this.messagingTemplate = messagingTemplate;
         this.pickTaskItemRepository = pickTaskItemRepository;
         this.productRepository = productRepository;
         this.workerRepository = workerRepository;
@@ -47,6 +51,7 @@ public class PickTaskService {
     public PickTaskResponseDto createPickTask(PickTaskRequestDto request) {
         PickTask task = new PickTask();
         task.setStatus(TaskStatus.PENDING);
+        task.setTaskCode("TASK-" + System.currentTimeMillis());
 
         if (request.getAssignedWorkerId() != null) {
             Worker worker = workerRepository.findById(request.getAssignedWorkerId())
@@ -58,10 +63,6 @@ public class PickTaskService {
             Product product = productRepository.findById(itemDto.getProductId())
                     .orElseThrow(() -> new RuntimeException("Ürün bulunamadı ID: " + itemDto.getProductId()));
 
-            if (product.getStockQuantity() < itemDto.getQuantity()) {
-                throw new RuntimeException("Yetersiz stok! Ürün: " + product.getName() + " Mevcut: " + product.getStockQuantity());
-            }
-
             PickTaskItem item = new PickTaskItem();
             item.setProduct(product);
             item.setQuantity(itemDto.getQuantity());
@@ -71,7 +72,6 @@ public class PickTaskService {
         }
 
         PickTask savedTask = pickTaskRepository.save(task);
-
         return pickTaskMapper.toResponseDto(savedTask);
     }
 
@@ -149,15 +149,61 @@ public class PickTaskService {
 
         for (PickTaskItem item : task.getItems()) {
             item.setPicked(true);
-
         }
 
         PickTask savedTask = pickTaskRepository.save(task);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("message", "Görev " + savedTask.getTaskCode() + " tamamlandı!");
+        payload.put("boxId", savedTask.getId());
+        payload.put("workerId", savedTask.getAssignedWorker() != null ? savedTask.getAssignedWorker().getId() : "Bilinmiyor");
+        messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
+
+        System.out.println("DEBUG: WebSocket mesajı /topic/manager/tasks kanalına fırlatıldı!");
+
         return pickTaskMapper.toResponseDto(savedTask);
     }
 
     @Transactional(readOnly = true)
     public List<PickTask> getCompletedTasksForWorker(Worker worker) {
         return pickTaskRepository.findByAssignedWorkerAndStatus(worker, TaskStatus.COMPLETED);
+    }
+
+    @Transactional
+    public PickTaskResponseDto pickTaskItem(Long taskId, Long productId) {
+        PickTask task = pickTaskRepository.findById(taskId)
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı!"));
+
+        PickTaskItem itemToPick = task.getItems().stream()
+                .filter(item -> item.getProduct().getId().equals(productId))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Ürün bulunamadı!"));
+
+        itemToPick.setPicked(true);
+        pickTaskItemRepository.save(itemToPick);
+
+        boolean allPicked = task.getItems().stream().allMatch(PickTaskItem::isPicked);
+
+        String productName = itemToPick.getProduct().getName();
+        String statusMessage = "";
+
+        if (allPicked) {
+            task.setStatus(TaskStatus.COMPLETED);
+            statusMessage = productName + " toplandı ve tüm ürünler tamamlandı, görev bitti!";
+        } else {
+            statusMessage = "Ürün " + productName + " toplandı.";
+        }
+
+        PickTask savedTask = pickTaskRepository.save(task);
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("message", statusMessage);
+        payload.put("taskId", savedTask.getId());
+        payload.put("productId", productId);
+        payload.put("workerId", savedTask.getAssignedWorker() != null ? savedTask.getAssignedWorker().getId() : "Bilinmiyor");
+        payload.put("isTaskCompleted", allPicked);
+
+        messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
+
+        return pickTaskMapper.toResponseDto(savedTask);
     }
 }

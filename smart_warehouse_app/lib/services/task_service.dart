@@ -11,9 +11,8 @@ class TaskService {
     String? token = prefs.getString('token');
     int? workerId = prefs.getInt('workerId');
 
-    print("DEBUG: Gönderilen Worker ID: $workerId");
     if (workerId == null) {
-      throw Exception('Hata: Worker ID bulunamadı. Lütfen tekrar giriş yapın.');
+      throw Exception('Hata: Worker ID bulunamadı.');
     }
 
     final response = await http.get(
@@ -24,14 +23,34 @@ class TaskService {
       },
     );
 
-    print("DEBUG: Response Status Code: ${response.statusCode}");
-    print("DEBUG: Response Body: ${response.body}");
-
     if (response.statusCode == 200) {
       List<dynamic> body = jsonDecode(utf8.decode(response.bodyBytes));
       return body.map((dynamic item) => TaskModel.fromJson(item)).toList();
     } else {
-      throw Exception('Görevler yüklenemedi. Durum Kodu: ${response.statusCode} - Hata: ${response.body}');
+      throw Exception('Görevler yüklenemedi.');
+    }
+  }
+
+  Future<bool> pickItem(int taskId, int productId) async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString('token');
+
+      if (token == null) return false;
+      final response = await http.post(
+        Uri.parse("$baseUrl/$taskId/pick/$productId"),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token"
+        },
+      );
+
+      print("DEBUG: Pick Item Status Code: ${response.statusCode}");
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print("Ürün toplama bağlantı hatası: $e");
+      return false;
     }
   }
 
@@ -40,10 +59,7 @@ class TaskService {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
 
-      if (token == null) {
-        print("DEBUG: Token bulunamadı, yetkisiz işlem!");
-        return false;
-      }
+      if (token == null) return false;
 
       final response = await http.put(
         Uri.parse("$baseUrl/$taskId/complete"),
@@ -53,19 +69,13 @@ class TaskService {
         },
       );
 
-      print("DEBUG: Complete Task Status Code: ${response.statusCode}");
-
-      if (response.statusCode == 200) {
-        return true;
-      } else {
-        print("DEBUG: Complete Task Error: ${response.body}");
-        return false;
-      }
+      return response.statusCode == 200;
     } catch (e) {
-      print("Görev tamamlama bağlantı hatası: $e");
+      print("Görev tamamlama hatası: $e");
       return false;
     }
   }
+
   Future<List<TaskModel>> getCompletedTasksForWorker() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String? token = prefs.getString('token');
@@ -76,7 +86,7 @@ class TaskService {
     }
 
     final response = await http.get(
-      Uri.parse("$baseUrl/worker/$workerId/completed"), // Yeni endpoint
+      Uri.parse("$baseUrl/worker/$workerId/completed"),
       headers: {
         "Content-Type": "application/json",
         "Authorization": "Bearer $token"

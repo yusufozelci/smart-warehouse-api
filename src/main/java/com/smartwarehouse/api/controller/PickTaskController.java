@@ -93,4 +93,12 @@ public class PickTaskController {
 
         return ResponseEntity.ok(response);
     }
+
+    @PostMapping("/{taskId}/pick/{productId}")
+    public ResponseEntity<PickTaskResponseDto> pickItem(
+            @PathVariable Long taskId,
+            @PathVariable Long productId) {
+        PickTaskResponseDto updatedTask = pickTaskService.pickTaskItem(taskId, productId);
+        return ResponseEntity.ok(updatedTask);
+    }
 }

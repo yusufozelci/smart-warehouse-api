@@ -23,4 +23,5 @@ public interface PickTaskRepository extends JpaRepository<PickTask, Long> {
     @NonNull
     @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
     List<PickTask> findAll();
+    long countByStatus(TaskStatus status);
 }

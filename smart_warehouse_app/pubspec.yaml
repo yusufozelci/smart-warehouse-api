@@ -15,6 +15,7 @@ dependencies:
   shared_preferences: ^2.2.3
   jwt_decoder: ^2.0.1
   mobile_scanner: ^7.2.0
+  stomp_dart_client: ^3.0.1
 
 dev_dependencies:
   flutter_test:

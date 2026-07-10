@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smart_warehouse_app/pages/admin_main_layout.dart';
 import 'package:smart_warehouse_app/worker_home_page.dart';
 import 'admin_home_page.dart';
 import 'services/auth_service.dart';
@@ -35,7 +36,10 @@ class LoginPage extends StatelessWidget {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Giriş Başarılı!")));
 
                   if (role == 'ADMIN') {
-                    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AdminHomePage()));
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (context) => const AdminMainLayout()),
+                    );
                   } else {
                     Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const WorkerHomePage()));
                   }

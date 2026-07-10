@@ -1,7 +1,10 @@
 package com.smartwarehouse.api.config;
 
+import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.security.SecurityRequirement;
+import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -10,10 +13,22 @@ public class SwaggerConfig {
 
     @Bean
     public OpenAPI smartWarehouseOpenAPI() {
+        final String securitySchemeName = "bearerAuth";
+
         return new OpenAPI()
                 .info(new Info()
                         .title("Smart Warehouse API")
-                        .description("Akıllı Depo Yönetim Sistemi - Lojistik ve Rota Rptimizasyonu REST API Dokümantasyonu")
-                        .version("v1.0.0"));
+                        .description("Akıllı Depo Yönetim Sistemi - Lojistik ve Rota Optimizasyonu REST API Dokümantasyonu")
+                        .version("v1.0.0"))
+                .addSecurityItem(new SecurityRequirement().addList(securitySchemeName))
+                .components(new Components()
+                        .addSecuritySchemes(securitySchemeName,
+                                new SecurityScheme()
+                                        .name(securitySchemeName)
+                                        .type(SecurityScheme.Type.HTTP)
+                                        .scheme("bearer")
+                                        .bearerFormat("JWT")
+                        )
+                );
     }
 }
