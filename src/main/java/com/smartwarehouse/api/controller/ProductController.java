@@ -7,6 +7,8 @@ import com.smartwarehouse.api.entity.Shelf;
 import com.smartwarehouse.api.mapper.ProductMapper;
 import com.smartwarehouse.api.repository.ProductRepository;
 import com.smartwarehouse.api.repository.ShelfRepository;
+import com.smartwarehouse.api.service.ProductService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,58 +19,38 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/products")
+@RequiredArgsConstructor
 public class ProductController {
 
-    private final ProductRepository productRepository;
-    private final ShelfRepository shelfRepository;
-    private final ProductMapper productMapper;
-
-    public ProductController(ProductRepository productRepository, ShelfRepository shelfRepository, ProductMapper productMapper) {
-        this.productRepository = productRepository;
-        this.shelfRepository = shelfRepository;
-        this.productMapper = productMapper;
-    }
+    private final ProductService productService;
 
     @PostMapping
     public ResponseEntity<ProductResponseDto> createProduct(@RequestBody ProductRequestDto request) {
-
-        Shelf shelf = null;
-        if (request.getShelfId() != null) {
-            shelf = shelfRepository.findWithProductsById(request.getShelfId())
-                    .orElseThrow(() -> new RuntimeException("Raf bulunamadı. ID: " + request.getShelfId()));
-        }
-
-        Product newProduct = productMapper.toEntity(request, shelf);
-
-        if (newProduct.getSku() == null || newProduct.getSku().isEmpty()) {
-            newProduct.setSku(UUID.randomUUID().toString().substring(0, 8).toUpperCase());
-        }
-
-        Product savedProduct = productRepository.save(newProduct);
-        return new ResponseEntity<>(productMapper.toResponseDto(savedProduct), HttpStatus.CREATED);
+        return ResponseEntity.ok(productService.addProduct(request));
     }
+
     @GetMapping
     public ResponseEntity<List<ProductResponseDto>> getAllProducts() {
-        List<ProductResponseDto> products = productRepository.findAll()
-                .stream()
-                .map(productMapper::toResponseDto)
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(products);
+        return ResponseEntity.ok(productService.getAllProducts());
     }
 
-    @GetMapping("/{sku}")
-    public ResponseEntity<ProductResponseDto> getProductBySku(@PathVariable String sku) {
-        return productRepository.findBySku(sku)
-                .map(product -> ResponseEntity.ok(productMapper.toResponseDto(product))) // Senin mapper metodun
-                .orElse(ResponseEntity.notFound().build());
+    @PutMapping("/{id}/decrease")
+    public ResponseEntity<?> decreaseStock(@PathVariable Long id, @RequestParam int amount) {
+        try {
+            return ResponseEntity.ok(productService.decreaseStock(id, amount));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteProduct(@PathVariable Long id) {
-        if (!productRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        productRepository.deleteById(id);
+        productService.deleteProduct(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<ProductResponseDto> updateProduct(@PathVariable Long id, @RequestBody ProductRequestDto request) {
+        return ResponseEntity.ok(productService.updateProduct(id, request));
     }
 }

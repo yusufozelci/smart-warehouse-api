@@ -8,5 +8,6 @@ public class ShelfResponseDto {
     private String shelfCode;
     private int coordinateX;
     private int coordinateY;
+    private int floor;
 
 }

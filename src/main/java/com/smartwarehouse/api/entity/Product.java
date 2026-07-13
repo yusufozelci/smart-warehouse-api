@@ -26,4 +26,7 @@ public class Product extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "shelf_id", nullable = false)
     private Shelf shelf;
+
+    @Column(nullable = false, columnDefinition = "double precision default 0.0")
+    private Double weight;
 }

@@ -9,5 +9,6 @@ public class ProductRequestDto {
     private String sku;
     private int stockQuantity;
     private Long shelfId;
+    private Double weight;
 
 }

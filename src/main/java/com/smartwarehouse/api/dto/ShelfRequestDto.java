@@ -7,5 +7,6 @@ public class ShelfRequestDto {
     private String shelfCode;
     private int coordinateX;
     private int coordinateY;
+    private int floor;
 
 }

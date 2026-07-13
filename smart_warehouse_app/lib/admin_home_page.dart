@@ -8,6 +8,11 @@ import 'package:smart_warehouse_app/services/auth_service.dart';
 import 'package:smart_warehouse_app/login_page.dart';
 import 'package:smart_warehouse_app/services/websocket_service.dart';
 import 'package:smart_warehouse_app/global_utils.dart';
+import 'package:smart_warehouse_app/worker_management_page.dart';
+import 'dummy_page.dart';
+import 'inventory_page.dart';
+import 'product_catalog_page.dart';
+import 'warehouse_map_page.dart';
 
 class AdminHomePage extends StatefulWidget {
   const AdminHomePage({super.key});
@@ -17,33 +22,27 @@ class AdminHomePage extends StatefulWidget {
 }
 
 class _AdminHomePageState extends State<AdminHomePage> {
-  List<Map<String, dynamic>> _liveUpdates = [];
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  int _selectedIndex = 0;
+  List<Map<String, dynamic>> _liveUpdates = [];
   int _totalProducts = 0;
   int _activeWorkers = 0;
   int _completedTasks = 0;
   int _errorLogs = 0;
   bool _isLoadingStats = true;
 
-  String get baseUrl {
-    if (kIsWeb) return "http://localhost:8080";
-    if (Platform.isAndroid) return "http://10.0.2.2:8080";
-    return "http://localhost:8080";
-  }
-
-  String get wsBaseUrl {
-    if (kIsWeb) return "ws://localhost:8080";
-    if (Platform.isAndroid) return "ws://10.0.2.2:8080";
-    return "ws://localhost:8080";
-  }
+  String get baseUrl => kIsWeb ? "http://localhost:8080" : (Platform.isAndroid ? "http://10.0.2.2:8080" : "http://localhost:8080");
 
   @override
   void initState() {
     super.initState();
+    WebSocketService.instance.connect("ws://localhost:8080/ws-warehouse");
     _fetchStats();
     _liveUpdates = List.from(WebSocketService.instance.messages);
     WebSocketService.instance.subscribe(_onTaskReceived);
   }
+
   void _onTaskReceived(Map<String, dynamic> data) {
     if (mounted) {
       setState(() {
@@ -58,47 +57,28 @@ class _AdminHomePageState extends State<AdminHomePage> {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
+      final headers = {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"};
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/admin/stats'),
-        headers: {
-          "Content-Type": "application/json",
-          if (token != null) "Authorization": "Bearer $token"
-        },
-      );
+      final response = await http.get(Uri.parse('$baseUrl/api/admin/stats'), headers: headers);
+      final workerResponse = await http.get(Uri.parse('$baseUrl/api/v1/workers'), headers: headers);
 
-      if (response.statusCode == 200) {
+      if (response.statusCode == 200 && workerResponse.statusCode == 200) {
         final data = jsonDecode(response.body);
+        List<dynamic> allWorkers = jsonDecode(workerResponse.body);
+
         setState(() {
           _totalProducts = data['totalProducts'] ?? 0;
-          _activeWorkers = data['activeWorkers'] ?? 0;
+          _activeWorkers = allWorkers.where((w) => w['role'] == 'WORKER').length;
           _completedTasks = data['completedTasks'] ?? 0;
           _errorLogs = data['errorLogs'] ?? 0;
           _isLoadingStats = false;
         });
+      } else {
+        setState(() => _isLoadingStats = false);
       }
     } catch (e) {
-      print("İstatistikler çekilemedi: $e");
       setState(() => _isLoadingStats = false);
     }
-  }
-
-  void _showNotification(Map<String, dynamic> data) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.white),
-            const SizedBox(width: 10),
-            Expanded(child: Text("Yeni İşlem: ${data['message'] ?? 'Ürün okutuldu'}")),
-          ],
-        ),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 3),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   @override
@@ -109,87 +89,208 @@ class _AdminHomePageState extends State<AdminHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isDesktop = MediaQuery.of(context).size.width > 800;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Yönetici Paneli"),
-        backgroundColor: Colors.redAccent,
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: () async {
-                await AuthService().logout();
-                if (mounted) {
-                  Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => LoginPage())
-                  );
-                }
-              }
-          )
-        ],
+      key: _scaffoldKey,
+      backgroundColor: const Color(0xFFF9FAFB),
+      drawer: isDesktop ? null : _buildSidebar(isDesktop: false),
+      body: SafeArea(
+        child: Row(
+          children: [
+            if (isDesktop) _buildSidebar(isDesktop: true),
+            Expanded(
+              child: Column(
+                children: [
+                  _buildHeader(isDesktop),
+                  Expanded(child: _buildCurrentPage(isDesktop)),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
-      body: Column(
+    );
+  }
+
+  Widget _buildSidebar({required bool isDesktop}) {
+    return Container(
+      width: 250,
+      color: const Color(0xFF111827),
+      child: Column(
         children: [
-          Expanded(
-            flex: 4,
-            child: _isLoadingStats
-                ? const Center(child: CircularProgressIndicator())
-                : GridView.count(
-              crossAxisCount: 2,
-              padding: const EdgeInsets.all(20),
-              mainAxisSpacing: 20,
-              crossAxisSpacing: 20,
+          const SizedBox(height: 30),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
               children: [
-                _buildStatCard("Toplam Ürün", "$_totalProducts", Icons.inventory, Colors.orange),
-                _buildStatCard("Aktif Personel", "$_activeWorkers", Icons.people, Colors.blue),
-                _buildStatCard("Tamamlanan Görev", "$_completedTasks", Icons.check_circle, Colors.green),
-                _buildStatCard("Hata Kaydı", "$_errorLogs", Icons.error, Colors.red),
+                Icon(Icons.analytics, color: Colors.white, size: 28),
+                SizedBox(width: 10),
+                Text("Akıllı Depo", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
-
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            color: Colors.grey.shade200,
-            child: const Text(
-              "Canlı Saha Akışı",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+          const SizedBox(height: 40),
+          _buildMenuTile(0, "Genel Durum", Icons.dashboard_outlined),
+          _buildMenuTile(1, "Personeller", Icons.people_outline),
+          _buildMenuTile(2, "Stok Yönetimi", Icons.inventory_2_outlined),
+          _buildMenuTile(3, "Görev & Rotalar", Icons.map_outlined),
+          const Spacer(),
+          Material(
+            color: Colors.transparent,
+            child: ListTile(
+              leading: const Icon(Icons.logout, color: Colors.white70),
+              title: const Text("Çıkış Yap", style: TextStyle(color: Colors.white70)),
+              onTap: () async {
+                await AuthService().logout();
+                if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage()));
+              },
             ),
           ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
 
-          Expanded(
-            flex: 5,
-            child: _liveUpdates.isEmpty
-                ? Center(
-              child: Text(
-                "Saha personelinden işlem bekleniyor...",
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
-              ),
+  Widget _buildMenuTile(int index, String title, IconData icon) {
+    final bool isSelected = _selectedIndex == index;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      child: Material(
+        color: isSelected ? Colors.white.withOpacity(0.1) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            setState(() => _selectedIndex = index);
+            if (MediaQuery.of(context).size.width <= 800) {
+              Navigator.pop(context);
+            }
+          },
+          child: ListTile(
+            leading: Icon(icon, color: isSelected ? Colors.white : Colors.white60),
+            title: Text(title, style: TextStyle(color: isSelected ? Colors.white : Colors.white60, fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(bool isDesktop) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: isDesktop ? 24 : 12, vertical: 16),
+      color: Colors.white,
+      child: Row(
+        children: [
+          if (!isDesktop)
+            IconButton(
+              icon: const Icon(Icons.menu, color: Colors.black87),
+              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            ),
+
+          Text(isDesktop ? "Warehouse Management" : "Dashboard", style: TextStyle(fontSize: isDesktop ? 22 : 18, fontWeight: FontWeight.bold)),
+          const Spacer(),
+
+          if (isDesktop)
+            Container(
+              width: 200,
+              height: 40,
+              decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
+              child: const TextField(decoration: InputDecoration(prefixIcon: Icon(Icons.search, size: 20, color: Colors.grey), border: InputBorder.none, hintText: "Search")),
+            ),
+          if (isDesktop) const SizedBox(width: 20),
+
+          const CircleAvatar(
+            backgroundColor: Color(0xFF111827),
+            radius: 18,
+            child: Text("YÖ", style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+
+          if (isDesktop) const SizedBox(width: 10),
+          if (isDesktop) const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text("Yusuf Özelci", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              Text("Admin", style: TextStyle(color: Colors.green, fontSize: 12)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCurrentPage(bool isDesktop) {
+    switch (_selectedIndex) {
+      case 0: return _buildDashboardScreen(isDesktop);
+      case 1: return const WorkerManagementPage(initialFilter: "ALL");
+      case 2: return const InventoryPage();
+      case 3: return const WarehouseMapPage();
+      default: return _buildDashboardScreen(isDesktop);
+    }
+  }
+
+  Widget _buildDashboardScreen(bool isDesktop) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(isDesktop ? 24 : 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+
+          if (isDesktop)
+            Wrap(
+              spacing: 20,
+              runSpacing: 20,
+              children: _buildStatCards(),
             )
-                : ListView.builder(
-              padding: const EdgeInsets.all(10),
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _buildStatCards().map((card) => Padding(padding: const EdgeInsets.only(right: 16), child: card)).toList(),
+              ),
+            ),
+
+          const SizedBox(height: 30),
+
+          if (isDesktop) ...[
+            Container(
+              height: 450,
+              decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))
+                  ]
+              ),
+              child: const ClipRRect(
+                borderRadius: BorderRadius.all(Radius.circular(12)),
+                child: WarehouseMapPage(),
+              ),
+            ),
+            const SizedBox(height: 30),
+          ],
+
+          const Text("Canlı Saha Akışı", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 15),
+          Container(
+            height: isDesktop ? 350 : MediaQuery.of(context).size.height * 0.65,
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+            child: _liveUpdates.isEmpty
+                ? Center(child: Text("Saha personelinden işlem bekleniyor...", style: TextStyle(color: Colors.grey.shade500)))
+                : ListView.separated(
+              padding: const EdgeInsets.all(16),
               itemCount: _liveUpdates.length,
+              separatorBuilder: (_, __) => Divider(color: Colors.grey.shade100),
               itemBuilder: (context, index) {
                 final update = _liveUpdates[index];
-                return Card(
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  child: ListTile(
-                    leading: const CircleAvatar(
-                      backgroundColor: Colors.green,
-                      child: Icon(Icons.flash_on, color: Colors.white),
-                    ),
-                    title: Text(
-                      update['message'] ?? "İşlem Başarılı",
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text("Kutu: ${update['boxId'] ?? '-'} | Personel: ${update['workerId'] ?? '-'}"),
-                    trailing: const Text(
-                      "Şimdi",
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                  ),
+                return ListTile(
+                  leading: const CircleAvatar(backgroundColor: Colors.green, radius: 15, child: Icon(Icons.flash_on, color: Colors.white, size: 15)),
+                  title: Text(update['message'] ?? "İşlem", style: const TextStyle(fontWeight: FontWeight.w500)),
+                  subtitle: Text("Görev ID: ${update['taskId'] ?? '-'}"),
+                  trailing: const Text("Şimdi", style: TextStyle(color: Colors.grey, fontSize: 12)),
                 );
               },
             ),
@@ -199,19 +300,43 @@ class _AdminHomePageState extends State<AdminHomePage> {
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 40, color: color),
-          const SizedBox(height: 10),
-          Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500), textAlign: TextAlign.center),
-          const SizedBox(height: 5),
-          Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-        ],
+  List<Widget> _buildStatCards() {
+    return [
+      _buildModernStatCard("Toplam Ürün", "$_totalProducts", Icons.inventory_2, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductCatalogPage()))),
+      _buildModernStatCard("Aktif Personel", "$_activeWorkers", Icons.people, Colors.blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WorkerManagementPage(initialFilter: "ACTIVE_ONLY")))),
+      _buildModernStatCard("Tamamlanan", "$_completedTasks", Icons.check_circle, Colors.green, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DummyPage(title: "Tamamlanan Görevler", icon: Icons.check_circle, color: Colors.green)))),
+      _buildModernStatCard("Hata Kaydı", "$_errorLogs", Icons.error, Colors.red, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DummyPage(title: "Hata Kayıtları", icon: Icons.error, color: Colors.red)))),
+    ];
+  }
+
+  Widget _buildModernStatCard(String title, String value, IconData icon, Color color, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 260,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+              child: Icon(icon, size: 28, color: color),
+            ),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: TextStyle(color: Colors.grey.shade600, fontSize: 13, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 4),
+                  Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87)),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

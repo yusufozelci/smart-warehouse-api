@@ -25,6 +25,7 @@ public class ProductMapper {
         }
 
         dto.setCreatedAt(product.getCreatedAt());
+        dto.setWeight(product.getWeight());
         return dto;
     }
 
@@ -38,6 +39,7 @@ public class ProductMapper {
         product.setSku(dto.getSku());
         product.setStockQuantity(dto.getStockQuantity());
         product.setShelf(shelf);
+        product.setWeight(dto.getWeight());
 
         return product;
     }

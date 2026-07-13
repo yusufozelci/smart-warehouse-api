@@ -18,6 +18,7 @@ public class ShelfMapper {
         dto.setShelfCode(shelf.getShelfCode());
         dto.setCoordinateX(shelf.getCoordinateX());
         dto.setCoordinateY(shelf.getCoordinateY());
+        dto.setFloor(shelf.getFloor());
 
         return dto;
     }
@@ -31,6 +32,7 @@ public class ShelfMapper {
         shelf.setShelfCode(dto.getShelfCode());
         shelf.setCoordinateX(dto.getCoordinateX());
         shelf.setCoordinateY(dto.getCoordinateY());
+        shelf.setFloor(dto.getFloor());
 
         return shelf;
     }

@@ -7,6 +7,7 @@ import com.smartwarehouse.api.dto.PickTaskResponseDto;
 import com.smartwarehouse.api.entity.*;
 import com.smartwarehouse.api.mapper.PickTaskMapper;
 import com.smartwarehouse.api.repository.*;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -15,6 +16,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@RequiredArgsConstructor
 @Service
 public class PickTaskService {
 
@@ -25,27 +27,9 @@ public class PickTaskService {
     private final WorkerRepository workerRepository;
     private final ShelfRepository shelfRepository;
     private final PickTaskMapper pickTaskMapper;
-
     private final TaskSortingService taskSortingService;
     private final RouteOptimizationService routeOptimizationService;
-
-    public PickTaskService(PickTaskRepository pickTaskRepository, SimpMessagingTemplate messagingTemplate, PickTaskItemRepository pickTaskItemRepository,
-                           ProductRepository productRepository,
-                           WorkerRepository workerRepository,
-                           ShelfRepository shelfRepository,
-                           PickTaskMapper pickTaskMapper,
-                           TaskSortingService taskSortingService,
-                           RouteOptimizationService routeOptimizationService) {
-        this.pickTaskRepository = pickTaskRepository;
-        this.messagingTemplate = messagingTemplate;
-        this.pickTaskItemRepository = pickTaskItemRepository;
-        this.productRepository = productRepository;
-        this.workerRepository = workerRepository;
-        this.shelfRepository = shelfRepository;
-        this.pickTaskMapper = pickTaskMapper;
-        this.taskSortingService = taskSortingService;
-        this.routeOptimizationService = routeOptimizationService;
-    }
+    private final ProductService productService;
 
     @Transactional
     public PickTaskResponseDto createPickTask(PickTaskRequestDto request) {
@@ -180,17 +164,14 @@ public class PickTaskService {
 
         itemToPick.setPicked(true);
         pickTaskItemRepository.save(itemToPick);
+        productService.decreaseStock(productId, 1);
 
         boolean allPicked = task.getItems().stream().allMatch(PickTaskItem::isPicked);
-
         String productName = itemToPick.getProduct().getName();
-        String statusMessage = "";
-
+        String statusMessage = productName + " toplandı ve stoktan düşüldü!";
         if (allPicked) {
             task.setStatus(TaskStatus.COMPLETED);
-            statusMessage = productName + " toplandı ve tüm ürünler tamamlandı, görev bitti!";
-        } else {
-            statusMessage = "Ürün " + productName + " toplandı.";
+            statusMessage += " Tüm ürünler tamamlandı, görev bitti!";
         }
 
         PickTask savedTask = pickTaskRepository.save(task);

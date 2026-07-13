@@ -1,10 +1,15 @@
+import 'dart:convert';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_warehouse_app/qr_scanner_page.dart';
 import 'package:smart_warehouse_app/services/auth_service.dart';
 import 'package:smart_warehouse_app/services/task_service.dart';
 import 'package:smart_warehouse_app/models/task_model.dart';
 import 'package:smart_warehouse_app/login_page.dart';
+import 'package:smart_warehouse_app/global_utils.dart';
 
 class WorkerHomePage extends StatefulWidget {
   const WorkerHomePage({super.key});
@@ -15,6 +20,7 @@ class WorkerHomePage extends StatefulWidget {
 
 class _WorkerHomePageState extends State<WorkerHomePage> {
   int _currentIndex = 0;
+  final Color primaryColor = const Color(0xFF1A237E);
 
   void _onTabTapped(int index) {
     setState(() {
@@ -25,25 +31,39 @@ class _WorkerHomePageState extends State<WorkerHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
-        title: Text(["Aktif Depo Görevleri", "Görev Geçmişi", "Personel Profili"][_currentIndex]),
-        backgroundColor: Colors.blueAccent,
+        title: Text(
+          ["Aktif Depo Görevleri", "Görev Geçmişi", "Personel Profili"][_currentIndex],
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: primaryColor,
+        iconTheme: const IconThemeData(color: Colors.white),
+        elevation: 0,
       ),
       body: [
         const _ActiveTasksTab(),
         const _CompletedTasksTab(),
         const _ProfileTab(),
       ][_currentIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: _onTabTapped,
-        selectedItemColor: Colors.blueAccent,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.assignment), label: 'Aktif'),
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Geçmiş'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profil'),
-        ],
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, -3))],
+        ),
+        child: BottomNavigationBar(
+          currentIndex: _currentIndex,
+          onTap: _onTabTapped,
+          selectedItemColor: primaryColor,
+          unselectedItemColor: Colors.grey.shade500,
+          backgroundColor: Colors.white,
+          type: BottomNavigationBarType.fixed,
+          elevation: 0,
+          items: const [
+            BottomNavigationBarItem(icon: Icon(Icons.assignment), label: 'Aktif'),
+            BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Geçmiş'),
+            BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profil'),
+          ],
+        ),
       ),
     );
   }
@@ -58,6 +78,13 @@ class _ActiveTasksTab extends StatefulWidget {
 
 class _ActiveTasksTabState extends State<_ActiveTasksTab> {
   late Future<List<TaskModel>> _tasksFuture;
+  final Color primaryColor = const Color(0xFF1A237E);
+
+  String get baseUrl {
+    if (kIsWeb) return "http://localhost:8080";
+    if (Platform.isAndroid) return "http://10.0.2.2:8080";
+    return "http://localhost:8080";
+  }
 
   @override
   void initState() {
@@ -76,21 +103,44 @@ class _ActiveTasksTabState extends State<_ActiveTasksTab> {
     return FutureBuilder<List<TaskModel>>(
       future: _tasksFuture,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError) return Center(child: Text("Hata: ${snapshot.error}"));
-        if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("Bekleyen görev yok."));
+        if (snapshot.connectionState == ConnectionState.waiting) return Center(child: CircularProgressIndicator(color: primaryColor));
+        if (snapshot.hasError) return Center(child: Text("Hata: ${snapshot.error}", style: const TextStyle(color: Colors.red)));
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.inventory_2_outlined, size: 80, color: Colors.grey.shade400),
+                const SizedBox(height: 16),
+                Text("Bekleyen görev yok.", style: TextStyle(fontSize: 18, color: Colors.grey.shade600)),
+              ],
+            ),
+          );
+        }
 
         final tasks = snapshot.data!;
         return ListView.builder(
+          padding: const EdgeInsets.all(12),
           itemCount: tasks.length,
           itemBuilder: (context, index) {
             final task = tasks[index];
             return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              elevation: 3,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              margin: const EdgeInsets.only(bottom: 12),
               child: ListTile(
-                title: Text("Görev ID: ${task.id}"),
-                subtitle: Text("Durum: ${task.status}"),
-                trailing: const Icon(Icons.touch_app),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: primaryColor.withOpacity(0.1), shape: BoxShape.circle),
+                  child: Icon(Icons.assignment_turned_in, color: primaryColor),
+                ),
+                title: Text("Görev ID: #${task.id}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text("Durum: ${task.status}", style: TextStyle(color: Colors.grey.shade700)),
+                ),
+                trailing: Icon(Icons.arrow_forward_ios, color: primaryColor, size: 18),
                 onTap: () => _showTaskDetails(context, task),
               ),
             );
@@ -104,6 +154,7 @@ class _ActiveTasksTabState extends State<_ActiveTasksTab> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -112,30 +163,83 @@ class _ActiveTasksTabState extends State<_ActiveTasksTab> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text("Görev (#${task.id})", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20), decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
+                  Text("Görev (#${task.id}) Ürünleri", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: primaryColor)),
                   const SizedBox(height: 20),
                   ...task.items.map((item) {
                     bool isPicked = item['isPicked'] == true;
-                    return ListTile(
-                      title: Text(item['productName'] ?? 'Ürün'),
-                      subtitle: Text("SKU: ${item['sku']}"),
-                      trailing: isPicked
-                          ? const Icon(Icons.check_circle, color: Colors.green)
-                          : ElevatedButton(
-                        onPressed: () async {
-                          final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerPage(expectedSku: item['sku'])));
-                          if (result == true) {
-                            bool success = await TaskService().pickItem(task.id, item['productId']);
-                            if (success) {
-                              setModalState(() { item['isPicked'] = true; });
-                              _refreshTasks();
+                    int requestedQty = item['quantity'] ?? 1;
+
+                    return Card(
+                      elevation: 0,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade200)),
+                      child: ListTile(
+                        leading: Icon(Icons.qr_code_scanner, color: isPicked ? Colors.green : Colors.grey.shade500),
+                        title: Text(item['productName'] ?? 'Ürün', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 4.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text("SKU: ${item['sku']}"),
+                              const SizedBox(height: 4),
+                              Text(
+                                  "İstenen Adet: $requestedQty",
+                                  style: TextStyle(
+                                      color: isPicked ? Colors.green : Colors.red.shade700,
+                                      fontWeight: FontWeight.bold
+                                  )
+                              ),
+                            ],
+                          ),
+                        ),
+                        trailing: isPicked
+                            ? const Icon(Icons.check_circle, color: Colors.green, size: 30)
+                            : ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: primaryColor,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () async {
+                            final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerPage(expectedSku: item['sku'])));
+
+                            if (result == true) {
+                              bool success = await TaskService().pickItem(task.id, item['productId']);
+
+                              if (success) {
+                                try {
+                                  SharedPreferences prefs = await SharedPreferences.getInstance();
+                                  String? token = prefs.getString('token');
+
+                                  final response = await http.put(
+                                    Uri.parse('$baseUrl/api/v1/products/${item['productId']}/decrease?amount=$requestedQty'),
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                      if (token != null) "Authorization": "Bearer $token"
+                                    },
+                                  );
+
+                                  if (response.statusCode == 200) {
+                                    setModalState(() { item['isPicked'] = true; });
+                                    _refreshTasks();
+                                    showGlobalNotification("Ürün okundu ve stoktan $requestedQty adet düşüldü!");
+                                  } else {
+                                    showGlobalNotification("Hata: ${response.body}");
+                                  }
+                                } catch (e) {
+                                  showGlobalNotification("Bağlantı hatası: $e");
+                                }
+                              }
                             }
-                          }
-                        },
-                        child: const Text("Tara"),
+                          },
+                          child: const Text("Tara"),
+                        ),
                       ),
                     );
                   }),
+                  SizedBox(height: MediaQuery.of(context).padding.bottom + 10),
                 ],
               ),
             );
@@ -148,23 +252,47 @@ class _ActiveTasksTabState extends State<_ActiveTasksTab> {
 
 class _CompletedTasksTab extends StatelessWidget {
   const _CompletedTasksTab();
+  final Color primaryColor = const Color(0xFF1A237E);
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<TaskModel>>(
       future: TaskService().getCompletedTasksForWorker(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snapshot.hasData) return Center(child: CircularProgressIndicator(color: primaryColor));
         final tasks = snapshot.data!;
+        tasks.sort((a, b) => b.id.compareTo(a.id));
+
+        if (tasks.isEmpty) {
+          return Center(
+            child: Text("Henüz tamamlanmış görev yok.", style: TextStyle(fontSize: 16, color: Colors.grey.shade600)),
+          );
+        }
+
         return ListView.builder(
+          padding: const EdgeInsets.all(12),
           itemCount: tasks.length,
           itemBuilder: (context, index) {
             final task = tasks[index];
-            return ListTile(
-              leading: const Icon(Icons.check_circle, color: Colors.green),
-              title: Text("Görev ID: ${task.id}"),
-              subtitle: Text("Toplam ${task.items.length} ürün toplandı."),
-              onTap: () => _showReadOnlyDetails(context, task),
+            return Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), shape: BoxShape.circle),
+                  child: const Icon(Icons.check_circle, color: Colors.green, size: 28),
+                ),
+                title: Text("Görev ID: #${task.id}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 5.0),
+                  child: Text("Toplam ${task.items.length} ürün toplandı.", style: TextStyle(color: Colors.grey.shade600)),
+                ),
+                trailing: Icon(Icons.visibility, color: Colors.grey.shade400),
+                onTap: () => _showReadOnlyDetails(context, task),
+              ),
             );
           },
         );
@@ -190,8 +318,7 @@ class _CompletedTasksTab extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20), decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
-
-                Text("Görev (#${task.id}) İçeriği", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.blueAccent)),
+                Text("Görev (#${task.id}) İçeriği", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: primaryColor)),
                 const SizedBox(height: 15),
 
                 ...task.items.map((item) => Card(
@@ -205,7 +332,7 @@ class _CompletedTasksTab extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.inventory_2_outlined, color: Colors.blueAccent, size: 20),
+                            Icon(Icons.inventory_2_outlined, color: primaryColor, size: 20),
                             const SizedBox(width: 8),
                             Expanded(child: Text(item['productName'] ?? 'Bilinmiyor', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
                           ],
@@ -216,7 +343,7 @@ class _CompletedTasksTab extends StatelessWidget {
                           children: [
                             _infoBadge(Icons.grid_3x3, "ID: ${item['productId'] ?? '-'}"),
                             _infoBadge(Icons.shelves, "Raf: ${item['shelfCode'] ?? '-'}"),
-                            _infoBadge(Icons.inventory, "Stok: ${item['stockQuantity'] ?? 0}"),
+                            _infoBadge(Icons.inventory, "İstenen: ${item['quantity'] ?? 1}"), // Burayı da miktara göre güncelledim
                           ],
                         ),
                       ],
@@ -234,6 +361,7 @@ class _CompletedTasksTab extends StatelessWidget {
       },
     );
   }
+
   Widget _infoBadge(IconData icon, String text) {
     return Row(
       children: [
@@ -256,6 +384,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   String _workerName = "Yükleniyor...";
   int _completedTaskCount = 0;
   bool _isLoading = true;
+  final Color primaryColor = const Color(0xFF1A237E);
 
   @override
   void initState() {
@@ -290,69 +419,83 @@ class _ProfileTabState extends State<_ProfileTab> {
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const CircleAvatar(
-              radius: 50,
-              backgroundColor: Colors.blueAccent,
-              child: Icon(Icons.person, size: 60, color: Colors.white),
+            const SizedBox(height: 20),
+            CircleAvatar(
+              radius: 55,
+              backgroundColor: primaryColor.withOpacity(0.1),
+              child: CircleAvatar(
+                radius: 50,
+                backgroundColor: primaryColor,
+                child: const Icon(Icons.person, size: 50, color: Colors.white),
+              ),
             ),
             const SizedBox(height: 20),
-            Text(_workerName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            const Text("Rol: Saha Görevlisi (Worker)", style: TextStyle(fontSize: 16, color: Colors.black54)),
-            const SizedBox(height: 30),
+            Text(_workerName, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: primaryColor)),
+            const SizedBox(height: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
+              child: Text("Saha Görevlisi (Worker)", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue.shade700)),
+            ),
+            const SizedBox(height: 40),
+
             Card(
-              elevation: 2,
-              color: Colors.green[50],
+              elevation: 4,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 32.0),
-                child: Column(
+                padding: const EdgeInsets.all(20.0),
+                child: Row(
                   children: [
-                    const Text("Tamamlanan Görev", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.green)),
-                    const SizedBox(height: 8),
-                    _isLoading
-                        ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.green))
-                        : Text("$_completedTaskCount", style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: Colors.green)),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), shape: BoxShape.circle),
+                      child: const Icon(Icons.check_circle, size: 36, color: Colors.green),
+                    ),
+                    const SizedBox(width: 20),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Tamamlanan Görev", style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 5),
+                        _isLoading
+                            ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.green))
+                            : Text("$_completedTaskCount", style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
+                      ],
+                    ),
                   ],
                 ),
               ),
             ),
+
             const Spacer(),
+
             SizedBox(
               width: double.infinity,
-              height: 50,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.logout, color: Colors.red),
-                label: const Text("Sistemden Güvenli Çıkış", style: TextStyle(fontSize: 16, color: Colors.red)),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.red),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              height: 55,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.logout),
+                label: const Text("Sistemden Güvenli Çıkış", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade50,
+                  foregroundColor: Colors.red,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: Colors.red.shade200, width: 1.5)
+                  ),
                 ),
                 onPressed: () async {
                   await AuthService().logout();
                   if (!context.mounted) return;
-                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => LoginPage()));
+                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginPage()));
                 },
               ),
             ),
+            const SizedBox(height: 20),
           ],
         ),
       ),
     );
   }
-}
-
-Widget _buildDetailRow(String title, String value) {
-  return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8.0),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(title, style: const TextStyle(fontSize: 16, color: Colors.black54, fontWeight: FontWeight.w500)),
-        Flexible(child: Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold), textAlign: TextAlign.right)),
-      ],
-    ),
-  );
 }

@@ -29,4 +29,7 @@ public class Shelf extends BaseEntity{
     @OneToMany(mappedBy = "shelf", fetch = FetchType.LAZY)
     @JsonIgnore
     private List<Product> products;
+
+    @Column(nullable = false, columnDefinition = "integer default 1")
+    private Integer floor = 1;
 }
