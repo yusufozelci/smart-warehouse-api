@@ -12,6 +12,8 @@ import java.util.List;
 
 @Repository
 public interface PickTaskRepository extends JpaRepository<PickTask, Long> {
+    @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
+    List<PickTask> findByAssignedWorkerAndStatusIn(Worker worker, List<TaskStatus> statuses);
 
     @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
     List<PickTask> findByAssignedWorkerAndStatus(Worker worker, TaskStatus status);
@@ -23,5 +25,6 @@ public interface PickTaskRepository extends JpaRepository<PickTask, Long> {
     @NonNull
     @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
     List<PickTask> findAll();
+
     long countByStatus(TaskStatus status);
 }

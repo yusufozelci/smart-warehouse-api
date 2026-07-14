@@ -3,6 +3,7 @@ package com.smartwarehouse.api.controller;
 import com.smartwarehouse.api.entity.Shelf;
 import com.smartwarehouse.api.repository.ShelfRepository;
 import com.smartwarehouse.api.service.WarehouseGraphService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -10,16 +11,12 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/v1/shelves")
 public class ShelfController {
 
     private final ShelfRepository shelfRepository;
     private final WarehouseGraphService warehouseGraphService;
-
-    public ShelfController(ShelfRepository shelfRepository, WarehouseGraphService warehouseGraphService) {
-        this.shelfRepository = shelfRepository;
-        this.warehouseGraphService = warehouseGraphService;
-    }
 
     @PostMapping
     public ResponseEntity<Shelf> createShelf(@RequestBody Shelf shelf) {

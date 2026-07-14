@@ -13,6 +13,7 @@ import 'dummy_page.dart';
 import 'inventory_page.dart';
 import 'product_catalog_page.dart';
 import 'warehouse_map_page.dart';
+import 'completed_tasks_page.dart';
 
 class AdminHomePage extends StatefulWidget {
   const AdminHomePage({super.key});
@@ -226,7 +227,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
       case 0: return _buildDashboardScreen(isDesktop);
       case 1: return const WorkerManagementPage(initialFilter: "ALL");
       case 2: return const InventoryPage();
-      case 3: return const WarehouseMapPage();
+      case 3: return const WarehouseMapPage(isDashboard: false);
       default: return _buildDashboardScreen(isDesktop);
     }
   }
@@ -256,7 +257,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
 
           if (isDesktop) ...[
             Container(
-              height: 450,
+              height: 360,
               decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
@@ -267,7 +268,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
               ),
               child: const ClipRRect(
                 borderRadius: BorderRadius.all(Radius.circular(12)),
-                child: WarehouseMapPage(),
+                child: WarehouseMapPage(isDashboard: true),
               ),
             ),
             const SizedBox(height: 30),
@@ -304,7 +305,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
     return [
       _buildModernStatCard("Toplam Ürün", "$_totalProducts", Icons.inventory_2, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductCatalogPage()))),
       _buildModernStatCard("Aktif Personel", "$_activeWorkers", Icons.people, Colors.blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WorkerManagementPage(initialFilter: "ACTIVE_ONLY")))),
-      _buildModernStatCard("Tamamlanan", "$_completedTasks", Icons.check_circle, Colors.green, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DummyPage(title: "Tamamlanan Görevler", icon: Icons.check_circle, color: Colors.green)))),
+      _buildModernStatCard("Tamamlanan", "$_completedTasks", Icons.check_circle, Colors.green, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CompletedTasksPage()))),
       _buildModernStatCard("Hata Kaydı", "$_errorLogs", Icons.error, Colors.red, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DummyPage(title: "Hata Kayıtları", icon: Icons.error, color: Colors.red)))),
     ];
   }

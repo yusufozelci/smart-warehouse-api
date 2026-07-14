@@ -61,6 +61,96 @@ class _InventoryPageState extends State<InventoryPage> {
     }
   }
 
+  void _showIncreaseStockDialog(Map<String, dynamic> product) {
+    final qtyCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("${product['name']} - Stok Ekle", style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Mevcut Stok: ${product['stockQuantity']} Adet", style: TextStyle(color: Colors.grey.shade700)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: qtyCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: "Eklenecek Miktar (Adet)",
+                  border: OutlineInputBorder()
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("İptal")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            onPressed: () async {
+              int addedQty = int.tryParse(qtyCtrl.text) ?? 0;
+              if (addedQty <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lütfen geçerli bir miktar girin.")));
+                return;
+              }
+
+              double unitWeight = (product['weight'] ?? 0.0).toDouble();
+              double addedWeight = unitWeight * addedQty;
+              String targetShelfCode = product['shelfCode'] ?? "";
+
+              double currentShelfWeight = 0.0;
+              for (var p in _products) {
+                if (p['shelfCode'] == targetShelfCode) {
+                  currentShelfWeight += (p['stockQuantity'] ?? 0).toDouble() * (p['weight'] ?? 0.0).toDouble();
+                }
+              }
+
+              if (currentShelfWeight + addedWeight > 320.0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                          "HATA: Raf kapasitesi (320 kg) aşılıyor!\nMevcut Ağırlık: ${currentShelfWeight.toStringAsFixed(1)} kg | Eklenmek İstenen: ${addedWeight.toStringAsFixed(1)} kg"
+                      ),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 4),
+                    )
+                );
+                return;
+              }
+
+              Navigator.pop(context);
+
+              SharedPreferences prefs = await SharedPreferences.getInstance();
+              String? token = prefs.getString('token');
+
+              try {
+                final response = await http.put(
+                  Uri.parse('$baseUrl/api/v1/products/${product['id']}/increase?amount=$addedQty'),
+                  headers: {
+                    "Content-Type": "application/json",
+                    if (token != null) "Authorization": "Bearer $token"
+                  },
+                );
+
+                if (response.statusCode == 200) {
+                  showGlobalNotification("Stok başarıyla eklendi!");
+                  _fetchProducts();
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Hata: ${response.statusCode} - ${response.body}")));
+                }
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Bağlantı hatası!")));
+              }
+            },
+            child: const Text("Stok Ekle", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          )
+        ],
+      ),
+    );
+  }
+
   Future<void> _decreaseStock(int id) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String? token = prefs.getString('token');
@@ -288,6 +378,11 @@ class _InventoryPageState extends State<InventoryPage> {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        IconButton(
+                          icon: const Icon(Icons.add_circle, color: Colors.green),
+                          onPressed: () => _showIncreaseStockDialog(prod),
+                          tooltip: "Yeni Stok Gir",
+                        ),
                         IconButton(
                           icon: const Icon(Icons.remove_circle, color: Colors.orange),
                           onPressed: () => _decreaseStock(prod['id']),

@@ -53,4 +53,14 @@ public class ProductController {
     public ResponseEntity<ProductResponseDto> updateProduct(@PathVariable Long id, @RequestBody ProductRequestDto request) {
         return ResponseEntity.ok(productService.updateProduct(id, request));
     }
+
+    @PutMapping("/{id}/increase")
+    public ResponseEntity<?> increaseStock(@PathVariable Long id, @RequestParam int amount) {
+        try {
+            Product updatedProduct = productService.increaseStock(id, amount);
+            return ResponseEntity.ok(updatedProduct);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
 }

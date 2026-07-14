@@ -7,9 +7,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smart_warehouse_app/qr_scanner_page.dart';
+import 'package:smart_warehouse_app/services/task_service.dart';
+import 'package:smart_warehouse_app/global_utils.dart';
+import '../models/task_model.dart';
+import "services/route_services.dart";
+import '../painters/route_painter.dart';
 
 class WarehouseMapPage extends StatefulWidget {
-  const WarehouseMapPage({super.key});
+  final bool isDashboard;
+  final bool isWorkerMode;
+  final TaskModel? workerTask;
+
+  const WarehouseMapPage({
+    super.key,
+    this.isDashboard = false,
+    this.isWorkerMode = false,
+    this.workerTask
+  });
 
   @override
   State<WarehouseMapPage> createState() => _WarehouseMapPageState();
@@ -18,10 +33,14 @@ class WarehouseMapPage extends StatefulWidget {
 class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProviderStateMixin {
   List<dynamic> _shelves = [];
   List<dynamic> _allProducts = [];
+  List<dynamic> _workers = [];
+  List<TaskModel> _tasks = [];
   bool _isLoading = true;
   int _selectedFloor = 1;
   bool _isInitialFitDone = false;
   Map<String, dynamic>? _selectedShelf;
+
+  TaskModel? _focusedTask;
 
   final TransformationController _transformationController = TransformationController();
   AnimationController? _animController;
@@ -37,7 +56,12 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
   void initState() {
     super.initState();
     _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
-    _fetchMapData();
+
+    if (widget.isWorkerMode && widget.workerTask != null) {
+      _focusedTask = widget.workerTask;
+    }
+
+    _fetchAllData();
   }
 
   @override
@@ -47,7 +71,26 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     super.dispose();
   }
 
-  Future<void> _fetchMapData() async {
+  void _sortTaskItems(TaskModel task) {
+    List<dynamic> sortedItems = List.from(task.items);
+    for (var item in sortedItems) {
+      var s = _shelves.firstWhere((sh) => sh['shelfCode'] == item['shelfCode'], orElse: () => null);
+      item['_floor'] = s != null ? (s['floor'] ?? 1) : 1;
+      item['_y'] = s != null ? (s['coordinateY'] ?? 0) : 0;
+      item['_x'] = s != null ? (s['coordinateX'] ?? 0) : 0;
+    }
+
+    sortedItems.sort((a, b) {
+      if (a['_floor'] != b['_floor']) return (a['_floor'] as int).compareTo(b['_floor'] as int);
+      if (a['_y'] != b['_y']) return (a['_y'] as num).compareTo(b['_y'] as num);
+      return (a['_x'] as num).compareTo(b['_x'] as num);
+    });
+
+    task.items.clear();
+    task.items.addAll(sortedItems);
+  }
+
+  Future<void> _fetchAllData() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
@@ -56,12 +99,31 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
       final shelfRes = await http.get(Uri.parse('$baseUrl/api/v1/shelves'), headers: headers);
       final prodRes = await http.get(Uri.parse('$baseUrl/api/v1/products'), headers: headers);
 
+      if (!widget.isWorkerMode) {
+        final workerRes = await http.get(Uri.parse('$baseUrl/api/v1/workers'), headers: headers);
+        final tasks = await TaskService().getAllTasks();
+        if (workerRes.statusCode == 200) {
+          _workers = jsonDecode(workerRes.body);
+          tasks.sort((a, b) => b.id.compareTo(a.id));
+          _tasks = tasks;
+        }
+      }
+
       if (shelfRes.statusCode == 200 && prodRes.statusCode == 200) {
         setState(() {
           _shelves = jsonDecode(shelfRes.body);
           _allProducts = jsonDecode(prodRes.body);
           _isLoading = false;
         });
+
+        if (widget.isWorkerMode && _focusedTask != null) {
+          _sortTaskItems(_focusedTask!);
+          var firstItem = _focusedTask!.items.firstWhere((i) => i['isPicked'] != true, orElse: () => _focusedTask!.items.first);
+          var startShelf = _shelves.firstWhere((s) => s['shelfCode'] == firstItem['shelfCode'], orElse: () => null);
+          if (startShelf != null) {
+            _selectedFloor = startShelf['floor'] ?? 1;
+          }
+        }
 
         if (!_isInitialFitDone) {
           _fitToScreen();
@@ -130,6 +192,8 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
   }
 
   void _focusOnShelf(String code) {
+    if (widget.isDashboard || widget.isWorkerMode) return;
+
     final target = _shelves.firstWhere((s) => s['shelfCode'] == code && s['floor'] == _selectedFloor, orElse: () => null);
     if (target == null) return;
 
@@ -144,7 +208,6 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
 
       double targetX = (target['coordinateX'] ?? 0).toDouble();
       double targetY = (target['coordinateY'] ?? 0).toDouble();
-
       double centerX = targetX + 70;
       double centerY = targetY + 45;
 
@@ -156,6 +219,44 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     });
   }
 
+  void _focusOnTask(TaskModel task) {
+    _sortTaskItems(task);
+    setState(() {
+      _focusedTask = task;
+      _selectedShelf = null;
+    });
+
+    if (task.items.isNotEmpty) {
+      String? targetShelfCode = task.items.first['shelfCode'];
+      if (targetShelfCode != null) {
+        var shelfData = _shelves.firstWhere((s) => s['shelfCode'] == targetShelfCode, orElse: () => null);
+        if (shelfData != null) {
+          setState(() {
+            _selectedFloor = shelfData['floor'] ?? 1;
+          });
+        }
+        _focusOnShelf(targetShelfCode);
+      }
+    }
+  }
+
+  List<Offset> _calculateRoutePoints() {
+    if (_focusedTask == null || _focusedTask!.items.isEmpty) return [];
+    return RouteService.calculateRoute(_shelves, _focusedTask!.items, _selectedFloor);
+  }
+
+  int _getCompletedRouteNodesCountForCurrentFloor() {
+    if (_focusedTask == null) return 0;
+    int count = 0;
+    for (var item in _focusedTask!.items) {
+      var shelf = _shelves.firstWhere((s) => s['shelfCode'] == item['shelfCode'], orElse: () => null);
+      if (shelf != null && shelf['floor'] == _selectedFloor) {
+        if (item['isPicked'] == true) count++;
+      }
+    }
+    return count;
+  }
+
   void _showProductsDialog(List<dynamic> products, String shelfCode) {
     showDialog(
       context: context,
@@ -165,7 +266,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
           children: [
             const Icon(Icons.inventory_2, color: Color(0xFF6200EA)),
             const SizedBox(width: 10),
-            Text("$shelfCode Products", style: const TextStyle(fontWeight: FontWeight.bold)),
+            Expanded(child: Text("$shelfCode Ürünleri", style: const TextStyle(fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
           ],
         ),
         content: SizedBox(
@@ -173,7 +274,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
           child: products.isEmpty
               ? const Padding(
             padding: EdgeInsets.all(20),
-            child: Text("No products found in this shelf.", style: TextStyle(color: Colors.grey)),
+            child: Text("Bu rafta henüz ürün yok.", style: TextStyle(color: Colors.grey)),
           )
               : ListView.separated(
             shrinkWrap: true,
@@ -187,14 +288,14 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                   backgroundColor: const Color(0xFF6200EA).withOpacity(0.1),
                   child: const Icon(Icons.inventory, color: Color(0xFF6200EA), size: 20),
                 ),
-                title: Text(p['name'] ?? 'Unknown', style: const TextStyle(fontWeight: FontWeight.bold)),
+                title: Text(p['name'] ?? 'Bilinmeyen Ürün', style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text("SKU: ${p['sku'] ?? '-'}"),
                 trailing: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text("${p['stockQuantity']} Units", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
-                    Text("${p['weight']} kg/unit", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    Text("${p['stockQuantity']} Adet", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                    Text("${p['weight']} kg/adet", style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   ],
                 ),
               );
@@ -204,31 +305,297 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("Close", style: TextStyle(color: Color(0xFF6200EA), fontWeight: FontWeight.bold)),
+            child: const Text("Kapat", style: TextStyle(color: Color(0xFF6200EA), fontWeight: FontWeight.bold)),
           )
         ],
       ),
     );
   }
 
+  void _showAssignWorkerDialog(TaskModel task) {
+    int? selectedWorkerId;
+
+    showDialog(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+              builder: (context, setStateSB) {
+                return AlertDialog(
+                  title: Text("Görev ID: ${task.id} - Personel Ata", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text("Bu göreve manuel olarak personel atayabilirsiniz."),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<int>(
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: "Personel Seçin", border: OutlineInputBorder()),
+                        value: selectedWorkerId,
+                        items: _workers.where((w) => w['role'] == 'WORKER').map((w) {
+                          return DropdownMenuItem<int>(
+                            value: w['id'],
+                            child: Text("${w['firstName']} ${w['lastName']}", overflow: TextOverflow.ellipsis),
+                          );
+                        }).toList(),
+                        onChanged: (val) => setStateSB(() => selectedWorkerId = val),
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("İptal")),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6200EA)),
+                      onPressed: selectedWorkerId == null ? null : () async {
+                        bool success = await TaskService().assignTaskManually(task.id, selectedWorkerId!);
+                        Navigator.pop(context);
+                        if (success) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Personel atandı!"), backgroundColor: Colors.green));
+                          _fetchAllData();
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Atama işlemi başarısız!"), backgroundColor: Colors.red));
+                        }
+                      },
+                      child: const Text("Görevi Ata", style: TextStyle(color: Colors.white)),
+                    )
+                  ],
+                );
+              }
+          );
+        }
+    );
+  }
+
+  void _showCreateTaskDialog() {
+    int? selectedWorkerId;
+    List<Map<String, dynamic>> taskItems = [];
+    final qtyController = TextEditingController(text: "1");
+    Map<String, dynamic>? selectedProduct;
+    TextEditingController? prodSearchController;
+
+    showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          return StatefulBuilder(
+            builder: (context, setStateSB) {
+              return AlertDialog(
+                title: const Text("Yeni Görev Oluştur", style: TextStyle(fontWeight: FontWeight.bold)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                content: SizedBox(
+                  width: 500,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButtonFormField<int>(
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: "Atanacak Personel (Opsiyonel)", border: OutlineInputBorder()),
+                        value: selectedWorkerId,
+                        items: [
+                          const DropdownMenuItem(value: null, child: Text("Personel Atama (Bekleyen Havuza Düşer)")),
+                          ..._workers.where((w) => w['role'] == 'WORKER').map((w) {
+                            return DropdownMenuItem<int>(
+                              value: w['id'],
+                              child: Text("${w['firstName']} ${w['lastName']}", overflow: TextOverflow.ellipsis),
+                            );
+                          }).toList()
+                        ],
+                        onChanged: (val) => setStateSB(() => selectedWorkerId = val),
+                      ),
+                      const SizedBox(height: 16),
+
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: Autocomplete<Map<String, dynamic>>(
+                                displayStringForOption: (option) => "${option['name']} (Stok: ${option['stockQuantity']})",
+                                optionsBuilder: (TextEditingValue textEditingValue) {
+                                  if (textEditingValue.text.isEmpty) {
+                                    return _allProducts.cast<Map<String, dynamic>>();
+                                  }
+                                  return _allProducts.where((p) =>
+                                  p['name'].toString().toLowerCase().contains(textEditingValue.text.toLowerCase()) ||
+                                      (p['sku'] != null && p['sku'].toString().toLowerCase().contains(textEditingValue.text.toLowerCase()))
+                                  ).cast<Map<String, dynamic>>();
+                                },
+                                onSelected: (Map<String, dynamic> selection) {
+                                  setStateSB(() => selectedProduct = selection);
+                                },
+                                fieldViewBuilder: (context, textController, focusNode, onFieldSubmitted) {
+                                  prodSearchController = textController;
+                                  return TextField(
+                                    controller: textController,
+                                    focusNode: focusNode,
+                                    decoration: InputDecoration(
+                                      labelText: "Ürün Ara (İsim / SKU)",
+                                      prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                      isDense: true,
+                                    ),
+                                    onChanged: (val) {
+                                      if(val.isEmpty) setStateSB(() => selectedProduct = null);
+                                    },
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              flex: 1,
+                              child: TextField(
+                                controller: qtyController,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(labelText: "Adet", border: OutlineInputBorder(), isDense: true),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              icon: const Icon(Icons.add_circle, color: Color(0xFF6200EA), size: 40),
+                              onPressed: () {
+                                if (selectedProduct != null) {
+                                  int qty = int.tryParse(qtyController.text) ?? 1;
+                                  int currentStock = selectedProduct!['stockQuantity'] ?? 0;
+                                  int alreadyInCart = taskItems.where((item) => item['productId'] == selectedProduct!['id'])
+                                      .fold(0, (sum, item) => sum + (item['quantity'] as int));
+
+                                  if (alreadyInCart + qty > currentStock) {
+                                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                        content: Text("Hata: Yetersiz Stok! (Mevcut Depo Stoğu: $currentStock)"),
+                                        backgroundColor: Colors.red
+                                    ));
+                                    return;
+                                  }
+
+                                  setStateSB(() {
+                                    taskItems.add({
+                                      "productId": selectedProduct!['id'],
+                                      "productName": selectedProduct!['name'],
+                                      "quantity": qty,
+                                      "shelfCode": selectedProduct!['shelfCode']
+                                    });
+                                    selectedProduct = null;
+                                    qtyController.text = "1";
+                                    prodSearchController?.clear();
+                                  });
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lütfen listeden bir ürün seçin!")));
+                                }
+                              },
+                            )
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      if (taskItems.isNotEmpty) ...[
+                        const Align(alignment: Alignment.centerLeft, child: Text("Toplanacak Ürünler", style: TextStyle(fontWeight: FontWeight.bold))),
+                        const SizedBox(height: 8),
+                        Container(
+                          constraints: const BoxConstraints(maxHeight: 150),
+                          decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: taskItems.length,
+                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              return ListTile(
+                                dense: true,
+                                title: Text(taskItems[index]['productName'], overflow: TextOverflow.ellipsis),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text("${taskItems[index]['quantity']} Adet", style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                                      onPressed: () => setStateSB(() => taskItems.removeAt(index)),
+                                    )
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        )
+                      ]
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text("İptal"),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6200EA)),
+                    onPressed: taskItems.isEmpty ? null : () async {
+                      List<Map<String, dynamic>> payloadItems = taskItems.map((e) => {
+                        "productId": e["productId"],
+                        "quantity": e["quantity"]
+                      }).toList();
+
+                      bool success = await TaskService().createTask(selectedWorkerId, payloadItems);
+
+                      Navigator.pop(context);
+
+                      if (success) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Görev başarıyla oluşturuldu!"), backgroundColor: Colors.green));
+                        _fetchAllData();
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Görev oluşturulamadı!"), backgroundColor: Colors.red));
+                      }
+                    },
+                    child: const Text("Görevi Oluştur", style: TextStyle(color: Colors.white)),
+                  ),
+                ],
+              );
+            },
+          );
+        }
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
+    if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
+    final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
     int totalShelves = currentFloorShelves.length;
     int occupiedShelves = currentFloorShelves.where((s) {
       return _allProducts.any((p) => p['shelfCode'] == s['shelfCode'] && (p['stockQuantity'] ?? 0) > 0);
     }).length;
     int emptyShelves = totalShelves - occupiedShelves;
 
+    if (widget.isWorkerMode) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text("Görev İcrası (#${_focusedTask?.id ?? ''})", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+          backgroundColor: const Color(0xFF1A237E),
+          iconTheme: const IconThemeData(color: Colors.white),
+        ),
+        body: Column(
+          children: [
+            Expanded(
+              flex: 5,
+              child: Container(
+                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 2))),
+                child: _buildMapViewer(currentFloorShelves, isMobile: true),
+              ),
+            ),
+            Expanded(
+              flex: 4,
+              child: _buildWorkerActionPanel(),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       color: Colors.transparent,
-      child: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : LayoutBuilder(
+      child: LayoutBuilder(
           builder: (context, constraints) {
             bool isMobile = constraints.maxWidth < 800;
-
             if (isMobile) {
               return _buildMobileLayout(constraints, currentFloorShelves, totalShelves, occupiedShelves, emptyShelves);
             } else {
@@ -239,171 +606,75 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     );
   }
 
-  Widget _buildDesktopLayout(BoxConstraints constraints, List currentFloorShelves, int totalShelves, int occupiedShelves, int emptyShelves) {
-    return Stack(
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget _buildWorkerActionPanel() {
+    if (_focusedTask == null) return const SizedBox.shrink();
+
+    bool allDone = _focusedTask!.items.every((i) => i['isPicked'] == true);
+    int currentIndex = _focusedTask!.items.indexWhere((i) => i['isPicked'] != true);
+
+    if (allDone) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(24),
+        color: Colors.white,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Expanded(
-              flex: 1,
-              child: Container(
-                decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade300, width: 1.5),
-                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))]
-                ),
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: _buildMapViewer(currentFloorShelves, isMobile: false),
-                    ),
-                    _buildBottomBar(totalShelves, occupiedShelves, emptyShelves, currentFloorShelves),
-                  ],
-                ),
+            const Icon(Icons.check_circle, color: Colors.green, size: 70),
+            const SizedBox(height: 15),
+            const Text("Tüm Ürünler Toplandı!", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                onPressed: () async {
+                  bool success = await TaskService().completeTask(_focusedTask!.id);
+                  if (success) {
+                    showGlobalNotification("Görev başarıyla tamamlandı!");
+                    if (mounted) Navigator.pop(context, true);
+                  }
+                },
+                child: const Text("Görevi Sonlandır", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
               ),
-            ),
-            const SizedBox(width: 24),
-            Expanded(
-              flex: 1,
-              child: Container(
-                decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade300, width: 1.5),
-                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))]
-                ),
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.dashboard_customize_outlined, size: 64, color: Colors.grey.shade300),
-                      const SizedBox(height: 16),
-                      Text("Sağ Panel Alanı", style: TextStyle(color: Colors.grey.shade500, fontSize: 16, fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+            )
           ],
         ),
-        if (_selectedShelf != null)
-          DraggableShelfPanel(
-            key: ValueKey(_selectedShelf!['shelfCode']),
-            shelf: _selectedShelf!,
-            productsInShelf: _allProducts.where((p) => p['shelfCode'] == _selectedShelf!['shelfCode']).toList(),
-            constraints: constraints,
-            onClose: () {
-              setState(() => _selectedShelf = null);
-              _fitToScreen();
-            },
-            onViewProducts: () => _showProductsDialog(
-                _allProducts.where((p) => p['shelfCode'] == _selectedShelf!['shelfCode']).toList(),
-                _selectedShelf!['shelfCode']
-            ),
-          ),
-      ],
-    );
-  }
+      );
+    }
 
-  Widget _buildMobileLayout(BoxConstraints constraints, List currentFloorShelves, int totalShelves, int occupiedShelves, int emptyShelves) {
     return Container(
-      decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey.shade300, width: 1.5),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))]
-      ),
-      clipBehavior: Clip.hardEdge,
+      width: double.infinity,
+      color: Colors.white,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<int>(
-                      value: _selectedFloor,
-                      icon: const Icon(Icons.arrow_drop_down, size: 20),
-                      items: [1, 2, 3].map((v) => DropdownMenuItem(value: v, child: Text("F$v", style: const TextStyle(fontWeight: FontWeight.bold)))).toList(),
-                      onChanged: (v) {
-                        if (v != null) {
-                          setState(() {
-                            _selectedFloor = v;
-                            _selectedShelf = null;
-                          });
-                          _fitToScreen();
-                        }
-                      },
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Container(
-                    height: 40,
-                    decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-                    child: Autocomplete<String>(
-                      optionsBuilder: (TextEditingValue textEditingValue) {
-                        if (textEditingValue.text.isEmpty) return const Iterable<String>.empty();
-                        return currentFloorShelves.map((s) => s['shelfCode'] as String).where((code) => code.toLowerCase().contains(textEditingValue.text.toLowerCase()));
-                      },
-                      onSelected: (String selection) => _focusOnShelf(selection),
-                      fieldViewBuilder: (context, textController, focusNode, onFieldSubmitted) {
-                        return TextField(
-                          controller: textController,
-                          focusNode: focusNode,
-                          style: const TextStyle(fontSize: 14),
-                          textAlignVertical: TextAlignVertical.center,
-                          decoration: const InputDecoration(
-                            hintText: "Search Shelf...",
-                            prefixIcon: Icon(Icons.search, size: 18, color: Colors.grey),
-                            border: InputBorder.none,
-                            isCollapsed: true,
-                            contentPadding: EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-            color: Colors.grey.shade50,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade200))),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildMobileKpi("$totalShelves", "Shelves", Colors.black87),
-                _buildMobileKpi("$occupiedShelves", "Occupied", Colors.deepPurple),
-                _buildMobileKpi("$emptyShelves", "Empty", Colors.grey),
+                const Text("Toplama Listesi", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text("${_getCompletedRouteNodesCountForCurrentFloor()} / ${_focusedTask!.items.where((i){
+                  var s = _shelves.firstWhere((sh)=>sh['shelfCode']==i['shelfCode'], orElse:()=>null);
+                  return s != null && s['floor'] == _selectedFloor;
+                }).length} Bu Katta", style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
-
           Expanded(
-            child: Stack(
-              children: [
-                _buildMapViewer(currentFloorShelves, isMobile: true),
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              itemCount: _focusedTask!.items.length,
+              itemBuilder: (context, index) {
+                var item = _focusedTask!.items[index];
+                bool isPicked = item['isPicked'] == true;
+                bool isCurrent = index == currentIndex;
 
-                if (_selectedShelf != null)
-                  Align(
-                    alignment: Alignment.bottomCenter,
-                    child: _buildMobileShelfDetailsCard(),
-                  ),
-              ],
+                return _buildWorkerTaskItem(item, isPicked, isCurrent, index + 1);
+              },
             ),
           ),
         ],
@@ -411,11 +682,352 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     );
   }
 
-  Widget _buildMobileKpi(String value, String label, Color color) {
+  Widget _buildWorkerTaskItem(Map<String, dynamic> item, bool isPicked, bool isCurrent, int orderNumber) {
+    int requestedQty = item['quantity'] ?? 1;
+
+    if (isCurrent) {
+      return Card(
+        elevation: 4,
+        margin: const EdgeInsets.only(bottom: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFF1A237E), width: 2)),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(backgroundColor: const Color(0xFF1A237E), radius: 14, child: Text("$orderNumber", style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(item['productName'] ?? 'Ürün', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildWorkerInfoBadge("Hedef Raf", item['shelfCode'] ?? '-', Icons.shelves, Colors.deepPurple),
+                  _buildWorkerInfoBadge("İstenen", "$requestedQty Adet", Icons.shopping_basket, Colors.blue),
+                  _buildWorkerInfoBadge("SKU", item['sku'] ?? '-', Icons.qr_code, Colors.orange),
+                ],
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1A237E), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                  icon: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 24),
+                  label: const Text("Rafı ve Ürünü Tara", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                  onPressed: () async {
+                    final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerPage(expectedSku: item['sku'])));
+                    if (result == true) {
+                      bool success = await TaskService().pickItem(_focusedTask!.id, item['productId']);
+                      if (success) {
+                        setState(() {
+                          item['isPicked'] = true;
+                        });
+
+                        var nextItem = _focusedTask!.items.firstWhere((i) => i['isPicked'] != true, orElse: () => null);
+                        if (nextItem != null) {
+                          var nextShelf = _shelves.firstWhere((s) => s['shelfCode'] == nextItem['shelfCode'], orElse: () => null);
+                          if (nextShelf != null && nextShelf['floor'] != null && nextShelf['floor'] != _selectedFloor) {
+                            setState(() {
+                              _selectedFloor = nextShelf['floor'];
+                            });
+                            _fitToScreen();
+                            showGlobalNotification("Kat değiştirildi: ${_selectedFloor}. Kata geçiniz!");
+                          } else {
+                            showGlobalNotification("Ürün okundu. Sıradaki hedefe ilerleyin!");
+                          }
+                        } else {
+                          showGlobalNotification("Son ürün okundu!");
+                        }
+                      } else {
+                        showGlobalNotification("Ürün okutulurken bir hata oluştu!");
+                      }
+                    }
+                  },
+                ),
+              )
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Opacity(
+      opacity: isPicked ? 0.6 : 0.9,
+      child: Card(
+        elevation: 0,
+        margin: const EdgeInsets.only(bottom: 8),
+        color: isPicked ? Colors.green.shade50 : Colors.grey.shade50,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: Colors.grey.shade300)),
+        child: ListTile(
+          dense: true,
+          leading: CircleAvatar(
+              backgroundColor: isPicked ? Colors.green : Colors.grey.shade400,
+              radius: 14,
+              child: isPicked
+                  ? const Icon(Icons.check, color: Colors.white, size: 16)
+                  : Text("$orderNumber", style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))
+          ),
+          title: Text(item['productName'] ?? 'Ürün', style: TextStyle(fontWeight: FontWeight.bold, decoration: isPicked ? TextDecoration.lineThrough : null)),
+          subtitle: Text("Kat: ${item['_floor']} | Raf: ${item['shelfCode']} | Adet: $requestedQty"),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWorkerInfoBadge(String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(color: color.withOpacity(0.05), borderRadius: BorderRadius.circular(8), border: Border.all(color: color.withOpacity(0.2))),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(height: 4),
+          Text(title, style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+          Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDesktopLayout(BoxConstraints constraints, List currentFloorShelves, int totalShelves, int occupiedShelves, int emptyShelves) {
+    if (widget.isDashboard) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(flex: 1, child: _buildMapContainer(currentFloorShelves, totalShelves, occupiedShelves, emptyShelves)),
+          const SizedBox(width: 24),
+          Expanded(flex: 1, child: _buildTaskPanel()),
+        ],
+      );
+    } else {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(flex: 1, child: _buildTaskPanel()),
+          const SizedBox(width: 24),
+          Expanded(
+              flex: 2,
+              child: Stack(
+                children: [
+                  _buildMapContainer(currentFloorShelves, totalShelves, occupiedShelves, emptyShelves),
+                  if (_selectedShelf != null && !widget.isDashboard)
+                    DraggableShelfPanel(
+                      key: ValueKey(_selectedShelf!['shelfCode']),
+                      shelf: _selectedShelf!,
+                      productsInShelf: _allProducts.where((p) => p['shelfCode'] == _selectedShelf!['shelfCode']).toList(),
+                      constraints: constraints,
+                      onClose: () {
+                        setState(() => _selectedShelf = null);
+                        _fitToScreen();
+                      },
+                      onViewProducts: () => _showProductsDialog(
+                          _allProducts.where((p) => p['shelfCode'] == _selectedShelf!['shelfCode']).toList(),
+                          _selectedShelf!['shelfCode']
+                      ),
+                    ),
+                ],
+              )
+          ),
+        ],
+      );
+    }
+  }
+
+  Widget _buildMapContainer(List currentFloorShelves, int totalShelves, int occupiedShelves, int emptyShelves) {
+    return Container(
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade300, width: 1.5),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))]
+      ),
+      child: Column(
+        children: [
+          Expanded(child: _buildMapViewer(currentFloorShelves, isMobile: false)),
+          _buildBottomBar(totalShelves, occupiedShelves, emptyShelves, currentFloorShelves),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTaskPanel() {
+    return Container(
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade300, width: 1.5),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))]
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: const BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)),
+                border: Border(bottom: BorderSide(color: Colors.grey.shade200))
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(widget.isDashboard ? Icons.assignment : Icons.share_location, color: const Color(0xFF6200EA)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(widget.isDashboard ? "Mevcut Görevler" : "Görev Kontrol Merkezi", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!widget.isDashboard)
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6200EA), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                    icon: const Icon(Icons.add, color: Colors.white, size: 18),
+                    label: const Text("Yeni Görev", style: TextStyle(color: Colors.white)),
+                    onPressed: _showCreateTaskDialog,
+                  )
+              ],
+            ),
+          ),
+          Expanded(
+              child: _tasks.isEmpty
+                  ? Center(child: Text("Sistemde henüz görev bulunmuyor.", style: TextStyle(color: Colors.grey.shade500)))
+                  : ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: _tasks.length,
+                itemBuilder: (context, index) {
+                  final task = _tasks[index];
+                  bool isCompleted = task.status == 'COMPLETED';
+                  bool isUnassigned = task.assignedWorkerName == 'Atanmamış' || task.assignedWorkerName.isEmpty;
+                  bool isFocused = _focusedTask?.id == task.id;
+
+                  if (widget.isDashboard) {
+                    return Card(
+                      elevation: 0,
+                      color: Colors.white,
+                      margin: const EdgeInsets.only(bottom: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: Colors.grey.shade200)),
+                      child: ListTile(
+                        dense: true,
+                        leading: Icon(
+                            isCompleted ? Icons.check_circle : (isUnassigned ? Icons.person_off : Icons.pending_actions),
+                            color: isCompleted ? Colors.green : (isUnassigned ? Colors.red : Colors.orange),
+                            size: 20
+                        ),
+                        title: Text("Görev ID: #${task.id}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
+                        subtitle: Text(isUnassigned ? "Personel Bekliyor" : "Atanan: ${task.assignedWorkerName}", style: TextStyle(color: isUnassigned ? Colors.red : Colors.grey.shade600, fontSize: 12)),
+                      ),
+                    );
+                  }
+
+                  return Card(
+                    elevation: isFocused ? 4 : 1,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: isFocused ? const Color(0xFF6200EA) : Colors.transparent, width: 2)
+                    ),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      leading: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                            color: isCompleted ? Colors.green.shade50 : (isUnassigned ? Colors.red.shade50 : Colors.orange.shade50),
+                            shape: BoxShape.circle
+                        ),
+                        child: Icon(
+                            isCompleted ? Icons.check_circle : (isUnassigned ? Icons.person_off : Icons.pending_actions),
+                            color: isCompleted ? Colors.green : (isUnassigned ? Colors.red : Colors.orange),
+                            size: 28
+                        ),
+                      ),
+                      title: Text("Görev ID: #${task.id}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isFocused ? const Color(0xFF6200EA) : Colors.black87)),
+                      subtitle: Padding(
+                        padding: const EdgeInsets.only(top: 6.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(isUnassigned ? "Personel Bekliyor" : "Atanan: ${task.assignedWorkerName}", style: TextStyle(color: isUnassigned ? Colors.red : Colors.grey.shade700, fontWeight: isUnassigned ? FontWeight.bold : FontWeight.w500)),
+                            const SizedBox(height: 4),
+                            Text("Toplam ${task.items.length} Kalem Ürün", style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                      trailing: isUnassigned
+                          ? ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                        onPressed: () => _showAssignWorkerDialog(task),
+                        child: const Text("Ata", style: TextStyle(color: Colors.white)),
+                      )
+                          : const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                      onTap: () => _focusOnTask(task),
+                    ),
+                  );
+                },
+              )
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileLayout(BoxConstraints constraints, List currentFloorShelves, int totalShelves, int occupiedShelves, int emptyShelves) {
     return Column(
       children: [
-        Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
-        Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey.shade600)),
+        if (!widget.isDashboard)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade300)),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6200EA), padding: const EdgeInsets.symmetric(vertical: 12)),
+                icon: const Icon(Icons.add, color: Colors.white),
+                label: const Text("Yeni Görev Oluştur", style: TextStyle(color: Colors.white, fontSize: 16)),
+                onPressed: _showCreateTaskDialog,
+              ),
+            ),
+          ),
+
+        Expanded(
+          flex: 1,
+          child: Container(
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade300)),
+            clipBehavior: Clip.hardEdge,
+            child: Stack(
+              children: [
+                Column(
+                  children: [
+                    Expanded(child: _buildMapViewer(currentFloorShelves, isMobile: true)),
+                    _buildBottomBar(totalShelves, occupiedShelves, emptyShelves, currentFloorShelves),
+                  ],
+                ),
+                if (_selectedShelf != null && !widget.isDashboard)
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: _buildMobileShelfDetailsCard(),
+                  ),
+              ],
+            ),
+          ),
+        ),
+
+        if (!widget.isDashboard) ...[
+          const SizedBox(height: 12),
+          Expanded(
+            flex: 1,
+            child: _buildTaskPanel(),
+          )
+        ]
       ],
     );
   }
@@ -423,13 +1035,11 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
   Widget _buildMobileShelfDetailsCard() {
     List<dynamic> productsInShelf = _allProducts.where((p) => p['shelfCode'] == _selectedShelf!['shelfCode']).toList();
     double totalWeight = 0.0;
-
     for (var p in productsInShelf) {
       double qty = (p['stockQuantity'] ?? 0).toDouble();
       double unitWeight = (p['weight'] ?? 0.0).toDouble();
       totalWeight += (qty * unitWeight);
     }
-
     double maxCapacity = 320.0;
     int occupancy = ((totalWeight / maxCapacity) * 100).toInt();
     if (totalWeight > 0 && occupancy == 0) occupancy = 1;
@@ -439,11 +1049,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     return Container(
       margin: const EdgeInsets.all(12),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 5))],
-      ),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 5))]),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -451,12 +1057,14 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  const Text("📦", style: TextStyle(fontSize: 22)),
-                  const SizedBox(width: 8),
-                  Text(_selectedShelf!['shelfCode'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-                ],
+              Expanded(
+                child: Row(
+                  children: [
+                    const Text("📦", style: TextStyle(fontSize: 22)),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_selectedShelf!['shelfCode'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900), overflow: TextOverflow.ellipsis)),
+                  ],
+                ),
               ),
               IconButton(
                 icon: const Icon(Icons.close, color: Colors.grey),
@@ -484,7 +1092,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6200EA), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
               onPressed: () => _showProductsDialog(productsInShelf, _selectedShelf!['shelfCode']),
-              child: const Text("View Products", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+              child: const Text("Ürünleri Gör", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
             ),
           )
         ],
@@ -509,12 +1117,9 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         if (!isMobile && event is PointerScrollEvent) {
           GestureBinding.instance.pointerSignalResolver.register(event, (PointerSignalEvent e) {
             final double scaleChange = event.scrollDelta.dy > 0 ? 0.9 : 1.1;
-
             final RenderBox? mapBox = _mapAreaKey.currentContext?.findRenderObject() as RenderBox?;
             if (mapBox == null) return;
-
             final double fitScale = min(mapBox.size.width / mapWidth, mapBox.size.height / mapHeight) * 0.95;
-
             final Matrix4 current = _transformationController.value;
             final double currentScale = current.getMaxScaleOnAxis();
             double targetScale = currentScale * scaleChange;
@@ -523,7 +1128,6 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
               _transformationController.value = _getFitMatrix();
               return;
             }
-
             targetScale = targetScale.clamp(fitScale, 3.5);
             final double actualFactor = targetScale / currentScale;
             final Offset focalPoint = event.localPosition;
@@ -552,10 +1156,8 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
               onInteractionEnd: (ScaleEndDetails details) {
                 final RenderBox? mapBox = _mapAreaKey.currentContext?.findRenderObject() as RenderBox?;
                 if (mapBox == null) return;
-
                 final double fitScale = min(mapBox.size.width / mapWidth, mapBox.size.height / mapHeight) * 0.95;
                 final double currentScale = _transformationController.value.getMaxScaleOnAxis();
-
                 if (currentScale < fitScale) {
                   _animateCamera(_getFitMatrix());
                 }
@@ -570,24 +1172,33 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                     children: [
                       Positioned.fill(child: CustomPaint(painter: PremiumGridPainter())),
 
+                      if (_focusedTask != null && _focusedTask!.items.isNotEmpty)
+                        Positioned.fill(
+                          child: CustomPaint(
+                            painter: RoutePainter(
+                              points: _calculateRoutePoints(),
+                              completedNodesCount: _getCompletedRouteNodesCountForCurrentFloor(), // GÜNCELLENEN PARAMETRE İSMİ
+                            ),
+                          ),
+                        ),
+
                       ...currentFloorShelves.map((shelf) {
                         double leftPos = (shelf['coordinateX'] ?? 0).toDouble();
                         double topPos = (shelf['coordinateY'] ?? 0).toDouble();
-
                         List<dynamic> productsInShelf = _allProducts.where((p) => p['shelfCode'] == shelf['shelfCode']).toList();
                         double totalWeight = 0.0;
-
                         for (var p in productsInShelf) {
-                          double qty = (p['stockQuantity'] ?? 0).toDouble();
-                          double unitWeight = (p['weight'] ?? 0.0).toDouble();
-                          totalWeight += (qty * unitWeight);
+                          totalWeight += ((p['stockQuantity'] ?? 0).toDouble() * (p['weight'] ?? 0.0).toDouble());
                         }
 
-                        double maxCapacity = 320.0;
-                        int occupancy = ((totalWeight / maxCapacity) * 100).toInt();
-
+                        int occupancy = ((totalWeight / 320.0) * 100).toInt();
                         if (totalWeight > 0 && occupancy == 0) occupancy = 1;
                         if (occupancy > 100) occupancy = 100;
+
+                        bool isTarget = false;
+                        if (_focusedTask != null) {
+                          isTarget = _focusedTask!.items.any((item) => item['shelfCode'] == shelf['shelfCode'] && item['isPicked'] != true);
+                        }
 
                         return Positioned(
                           left: leftPos,
@@ -596,7 +1207,8 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                             shelf: shelf,
                             occupancy: occupancy,
                             isSelected: _selectedShelf?['shelfCode'] == shelf['shelfCode'],
-                            onTap: () => _focusOnShelf(shelf['shelfCode']),
+                            isTarget: isTarget,
+                            onTap: widget.isDashboard || widget.isWorkerMode ? () {} : () => _focusOnShelf(shelf['shelfCode']),
                           ),
                         );
                       }).toList(),
@@ -619,7 +1231,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                     IconButton(icon: const Icon(Icons.remove), onPressed: () => _zoom(0.8)),
                     const Divider(height: 1),
                     IconButton(
-                      tooltip: "Fit to Screen",
+                      tooltip: "Ekrana Sığdır",
                       icon: const Icon(Icons.crop_free, color: Colors.deepPurple),
                       onPressed: () => _fitToScreen(),
                     ),
@@ -638,7 +1250,6 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(16), bottomRight: Radius.circular(16)),
         border: Border(top: BorderSide(color: Colors.grey.shade200)),
       ),
       child: Row(
@@ -651,7 +1262,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
               child: DropdownButton<int>(
                 value: _selectedFloor,
                 icon: const Icon(Icons.arrow_drop_down, size: 20),
-                items: [1, 2, 3].map((v) => DropdownMenuItem(value: v, child: Text("Floor $v", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)))).toList(),
+                items: [1, 2, 3].map((v) => DropdownMenuItem(value: v, child: Text("Kat $v", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)))).toList(),
                 onChanged: (v) {
                   if (v != null) {
                     setState(() {
@@ -682,7 +1293,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                     style: const TextStyle(fontSize: 13),
                     textAlignVertical: TextAlignVertical.center,
                     decoration: const InputDecoration(
-                      hintText: "Search Shelf...",
+                      hintText: "Rafta Ara...",
                       prefixIcon: Icon(Icons.search, size: 18, color: Colors.grey),
                       border: InputBorder.none,
                       isCollapsed: true,
@@ -698,11 +1309,11 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
             fit: BoxFit.scaleDown,
             child: Row(
               children: [
-                _buildSmallKpi("$totalShelves", "Shelves", Colors.black87, Icons.grid_view),
+                _buildSmallKpi("$totalShelves", "Raflar", Colors.black87, Icons.grid_view),
                 const SizedBox(width: 8),
-                _buildSmallKpi("$occupiedShelves", "Occupied", Colors.deepPurple, Icons.inventory_2),
+                _buildSmallKpi("$occupiedShelves", "Dolu", Colors.deepPurple, Icons.inventory_2),
                 const SizedBox(width: 8),
-                _buildSmallKpi("$emptyShelves", "Empty", Colors.grey, Icons.check_box_outline_blank),
+                _buildSmallKpi("$emptyShelves", "Boş", Colors.grey, Icons.check_box_outline_blank),
               ],
             ),
           ),
@@ -824,12 +1435,14 @@ class _DraggableShelfPanelState extends State<DraggableShelfPanel> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        children: [
-                          Icon(Icons.drag_indicator, color: Colors.grey.shade500, size: 18),
-                          const SizedBox(width: 8),
-                          const Text("Shelf Details", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
-                        ],
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Icon(Icons.drag_indicator, color: Colors.grey.shade500, size: 18),
+                            const SizedBox(width: 8),
+                            const Expanded(child: Text("Raf Detayları", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87), overflow: TextOverflow.ellipsis)),
+                          ],
+                        ),
                       ),
                       IconButton(
                         icon: const Icon(Icons.close, size: 18),
@@ -859,12 +1472,12 @@ class _DraggableShelfPanelState extends State<DraggableShelfPanel> {
                       const SizedBox(height: 16),
                       const Divider(),
                       const SizedBox(height: 8),
-                      _buildPanelRow("Occupancy", "$occupancy%"),
-                      _buildPanelRow("Total Items", "$productsCount Types"),
-                      _buildPanelRow("Max Capacity", "${maxCapacity.toInt()} kg"),
-                      _buildPanelRow("Current Weight", "${totalWeight.toStringAsFixed(1)} kg"),
-                      _buildPanelRow("Temperature", "21°C"),
-                      _buildPanelRow("Humidity", "58%"),
+                      _buildPanelRow("Doluluk", "$occupancy%"),
+                      _buildPanelRow("Ürün Tipi", "$productsCount Çeşit"),
+                      _buildPanelRow("Maks Kapasite", "${maxCapacity.toInt()} kg"),
+                      _buildPanelRow("Mevcut Ağırlık", "${totalWeight.toStringAsFixed(1)} kg"),
+                      _buildPanelRow("Sıcaklık", "21°C"),
+                      _buildPanelRow("Nem", "58%"),
                       const SizedBox(height: 24),
                       SizedBox(
                         width: double.infinity,
@@ -872,7 +1485,7 @@ class _DraggableShelfPanelState extends State<DraggableShelfPanel> {
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6200EA), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                           onPressed: widget.onViewProducts,
-                          child: const Text("View Products", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                          child: const Text("Ürünleri Gör", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
                         ),
                       )
                     ],
@@ -892,7 +1505,7 @@ class _DraggableShelfPanelState extends State<DraggableShelfPanel> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w600)),
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
           Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
         ],
       ),
@@ -904,9 +1517,10 @@ class EnterpriseShelfWidget extends StatefulWidget {
   final Map<String, dynamic> shelf;
   final int occupancy;
   final bool isSelected;
+  final bool isTarget;
   final VoidCallback onTap;
 
-  const EnterpriseShelfWidget({super.key, required this.shelf, required this.occupancy, required this.isSelected, required this.onTap});
+  const EnterpriseShelfWidget({super.key, required this.shelf, required this.occupancy, required this.isSelected, this.isTarget = false, required this.onTap});
 
   @override
   State<EnterpriseShelfWidget> createState() => _EnterpriseShelfWidgetState();
@@ -928,66 +1542,86 @@ class _EnterpriseShelfWidgetState extends State<EnterpriseShelfWidget> {
     bool isEmpty = widget.occupancy == 0;
     Color statusColor = getOccupancyColor(widget.occupancy);
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedScale(
-          scale: _isHovered || widget.isSelected ? 1.05 : 1.0,
-          duration: const Duration(milliseconds: 150),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            width: 140,
-            height: 90,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: isEmpty ? Colors.white : statusColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: widget.isSelected ? const Color(0xFF6200EA) : (isEmpty ? Colors.grey.shade300 : statusColor), width: widget.isSelected ? 3 : 2),
-              boxShadow: [
-                if (_isHovered || widget.isSelected) BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 4))
-              ],
-            ),
-            child: isEmpty
-                ? Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.add, color: Colors.grey, size: 28),
-                const SizedBox(height: 5),
-                Text(widget.shelf['shelfCode'].split('-').last, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-              ],
-            )
-                : Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 4,
-                  children: List.generate((widget.occupancy / 33).ceil(), (_) => const Text("📦", style: TextStyle(fontSize: 16))),
-                ),
-                Container(
-                  height: 4,
-                  width: double.infinity,
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2)),
-                  child: FractionallySizedBox(
-                    alignment: Alignment.centerLeft,
-                    widthFactor: widget.occupancy / 100,
-                    child: Container(decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(2))),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        MouseRegion(
+          onEnter: (_) => setState(() => _isHovered = true),
+          onExit: (_) => setState(() => _isHovered = false),
+          child: GestureDetector(
+            onTap: widget.onTap,
+            child: AnimatedScale(
+              scale: _isHovered || widget.isSelected || widget.isTarget ? 1.05 : 1.0,
+              duration: const Duration(milliseconds: 150),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 140,
+                height: 90,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: isEmpty ? Colors.white : statusColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                      color: widget.isTarget ? Colors.redAccent : (widget.isSelected ? const Color(0xFF6200EA) : (isEmpty ? Colors.grey.shade300 : statusColor)),
+                      width: widget.isTarget || widget.isSelected ? 3 : 2
                   ),
+                  boxShadow: [
+                    if (_isHovered || widget.isSelected || widget.isTarget)
+                      BoxShadow(color: widget.isTarget ? Colors.redAccent.withOpacity(0.3) : Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 4))
+                  ],
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: isEmpty
+                    ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(widget.shelf['shelfCode'].split('-').last, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                    Text("${widget.occupancy}%", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: statusColor)),
+                    const Icon(Icons.add, color: Colors.grey, size: 28),
+                    const SizedBox(height: 5),
+                    Text(widget.shelf['shelfCode'].split('-').last, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
                   ],
                 )
-              ],
+                    : Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 4,
+                      children: List.generate((widget.occupancy / 33).ceil(), (_) => const Text("📦", style: TextStyle(fontSize: 16))),
+                    ),
+                    Container(
+                      height: 4,
+                      width: double.infinity,
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2)),
+                      child: FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: widget.occupancy / 100,
+                        child: Container(decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(2))),
+                      ),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(widget.shelf['shelfCode'].split('-').last, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                        Text("${widget.occupancy}%", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: statusColor)),
+                      ],
+                    )
+                  ],
+                ),
+              ),
             ),
           ),
         ),
-      ),
+
+        if (widget.isTarget)
+          const Positioned(
+            top: -10,
+            right: -10,
+            child: CircleAvatar(
+              radius: 14,
+              backgroundColor: Colors.redAccent,
+              child: Icon(Icons.location_on, size: 18, color: Colors.white),
+            ),
+          )
+      ],
     );
   }
 }

@@ -1,5 +1,6 @@
 package com.smartwarehouse.api.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -24,6 +25,7 @@ public class Product extends BaseEntity {
     private Integer stockQuantity;
 
     @ManyToOne(fetch = FetchType.LAZY)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     @JoinColumn(name = "shelf_id", nullable = false)
     private Shelf shelf;
 

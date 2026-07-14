@@ -8,6 +8,7 @@ import com.smartwarehouse.api.mapper.ProductMapper;
 import com.smartwarehouse.api.repository.ProductRepository;
 import com.smartwarehouse.api.repository.ShelfRepository;
 import lombok.RequiredArgsConstructor;
+import org.hibernate.Hibernate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -75,5 +76,18 @@ public class ProductService {
         }
 
         return productMapper.toResponseDto(productRepository.save(product));
+    }
+
+    @Transactional
+    public Product increaseStock(Long id, int amount) {
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Ürün bulunamadı ID: " + id));
+        product.setStockQuantity(product.getStockQuantity() + amount);
+        Product savedProduct = productRepository.save(product);
+        if (savedProduct.getShelf() != null) {
+            Hibernate.initialize(savedProduct.getShelf());
+        }
+
+        return savedProduct;
     }
 }

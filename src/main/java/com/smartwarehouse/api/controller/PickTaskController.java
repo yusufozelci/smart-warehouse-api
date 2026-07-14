@@ -9,6 +9,7 @@ import com.smartwarehouse.api.mapper.PickTaskMapper;
 import com.smartwarehouse.api.repository.PickTaskRepository;
 import com.smartwarehouse.api.repository.WorkerRepository;
 import com.smartwarehouse.api.service.PickTaskService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,20 +18,14 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/v1/tasks")
-public class PickTaskController {
+public class    PickTaskController {
 
     private final PickTaskService pickTaskService;
     private final PickTaskRepository pickTaskRepository;
     private final PickTaskMapper pickTaskMapper;
     private final WorkerRepository workerRepository;
-
-    public PickTaskController(PickTaskService pickTaskService, PickTaskRepository pickTaskRepository, PickTaskMapper pickTaskMapper, WorkerRepository workerRepository) {
-        this.pickTaskService = pickTaskService;
-        this.pickTaskRepository = pickTaskRepository;
-        this.pickTaskMapper = pickTaskMapper;
-        this.workerRepository = workerRepository;
-    }
 
     @PostMapping
     public ResponseEntity<PickTaskResponseDto> createTask(@RequestBody PickTaskRequestDto requestDto) {
@@ -100,5 +95,13 @@ public class PickTaskController {
             @PathVariable Long productId) {
         PickTaskResponseDto updatedTask = pickTaskService.pickTaskItem(taskId, productId);
         return ResponseEntity.ok(updatedTask);
+    }
+
+    @PutMapping("/{taskId}/assign/{workerId}")
+    public ResponseEntity<PickTaskResponseDto> assignTaskManually(
+            @PathVariable Long taskId,
+            @PathVariable Long workerId) {
+        PickTaskResponseDto assignedTask = pickTaskService.assignTaskManually(taskId, workerId);
+        return ResponseEntity.ok(assignedTask);
     }
 }

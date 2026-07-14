@@ -7,6 +7,7 @@ import com.smartwarehouse.api.entity.Role;
 import com.smartwarehouse.api.entity.Worker;
 import com.smartwarehouse.api.repository.WorkerRepository;
 import com.smartwarehouse.api.security.JwtService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -14,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/auth")
 public class AuthController {
 
@@ -21,14 +23,6 @@ public class AuthController {
     private final JwtService jwtService;
     private final WorkerRepository workerRepository;
     private final PasswordEncoder passwordEncoder;
-
-    public AuthController(AuthenticationManager authenticationManager, JwtService jwtService,
-                          WorkerRepository workerRepository, PasswordEncoder passwordEncoder) {
-        this.authenticationManager = authenticationManager;
-        this.jwtService = jwtService;
-        this.workerRepository = workerRepository;
-        this.passwordEncoder = passwordEncoder;
-    }
 
     @PostMapping("/register")
     public ResponseEntity<String> register(@RequestBody WorkerRequestDto request) {

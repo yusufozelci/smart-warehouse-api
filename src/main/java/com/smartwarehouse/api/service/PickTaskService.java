@@ -12,9 +12,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Service
@@ -67,25 +69,17 @@ public class PickTaskService {
 
         Shelf currentWorkerLocation = shelfRepository.findById(currentShelfId)
                 .orElseThrow(() -> new RuntimeException("Personelin bulunduğu raf bulunamadı!"));
-
-        List<Shelf> allShelves = shelfRepository.findAll();
-
-        List<PickTask> pendingTasks = pickTaskRepository.findByStatus(TaskStatus.PENDING);
-
-        if (pendingTasks == null || pendingTasks.isEmpty()) {
+        List<PickTask> unassignedTasks = pickTaskRepository.findAll().stream()
+                .filter(t -> t.getStatus() == TaskStatus.PENDING)
+                .filter(t -> t.getAssignedWorker() == null)
+                .filter(t -> t.getItems() != null && !t.getItems().isEmpty())
+                .collect(Collectors.toList());
+        if (unassignedTasks.isEmpty()) {
             throw new RuntimeException("Sistemde atanacak bekleyen görev bulunmamaktadır.");
         }
-
-        taskSortingService.sortTasksByDistance(pendingTasks, currentWorkerLocation);
-
-        PickTask closestTask = pendingTasks.get(0);
+        taskSortingService.sortTasksByDistance(unassignedTasks, currentWorkerLocation);
+        PickTask closestTask = unassignedTasks.get(0);
         closestTask.setAssignedWorker(worker);
-
-        Shelf targetShelf = closestTask.getItems().get(0).getProduct().getShelf();
-        List<Shelf> shortestRoute = routeOptimizationService.calculateShortestPathDijkstra(
-                currentWorkerLocation, targetShelf, allShelves
-        );
-
         PickTask savedTask = pickTaskRepository.save(closestTask);
 
         return pickTaskMapper.toResponseDto(savedTask);
@@ -112,14 +106,18 @@ public class PickTaskService {
 
         pickTaskRepository.save(task);
     }
+
     @Transactional(readOnly = true)
     public List<PickTask> findAllTasks() {
         return pickTaskRepository.findAll();
     }
+
     @Transactional(readOnly = true)
     public List<PickTask> getPendingTasksForWorker(Worker worker) {
-        return pickTaskRepository.findByAssignedWorkerAndStatus(worker, TaskStatus.PENDING);
+        List<TaskStatus> activeStatuses = Arrays.asList(TaskStatus.PENDING, TaskStatus.IN_PROGRESS);
+        return pickTaskRepository.findByAssignedWorkerAndStatusIn(worker, activeStatuses);
     }
+
     @Transactional
     public PickTaskResponseDto completePickTask(Long taskId) {
         PickTask task = pickTaskRepository.findById(taskId)
@@ -164,27 +162,39 @@ public class PickTaskService {
 
         itemToPick.setPicked(true);
         pickTaskItemRepository.save(itemToPick);
-        productService.decreaseStock(productId, 1);
+        productService.decreaseStock(productId, itemToPick.getQuantity());
 
         boolean allPicked = task.getItems().stream().allMatch(PickTaskItem::isPicked);
         String productName = itemToPick.getProduct().getName();
         String statusMessage = productName + " toplandı ve stoktan düşüldü!";
+        task.setStatus(TaskStatus.IN_PROGRESS);
+
         if (allPicked) {
-            task.setStatus(TaskStatus.COMPLETED);
-            statusMessage += " Tüm ürünler tamamlandı, görev bitti!";
+            statusMessage += " Çalışan onayı (Görevi Sonlandırma) bekleniyor...";
         }
 
         PickTask savedTask = pickTaskRepository.save(task);
-
         Map<String, Object> payload = new HashMap<>();
         payload.put("message", statusMessage);
         payload.put("taskId", savedTask.getId());
         payload.put("productId", productId);
         payload.put("workerId", savedTask.getAssignedWorker() != null ? savedTask.getAssignedWorker().getId() : "Bilinmiyor");
-        payload.put("isTaskCompleted", allPicked);
+        payload.put("isTaskCompleted", false);
 
         messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
 
+        return pickTaskMapper.toResponseDto(savedTask);
+    }
+
+    @Transactional
+    public PickTaskResponseDto assignTaskManually(Long taskId, Long workerId) {
+        PickTask task = pickTaskRepository.findById(taskId)
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı!"));
+        Worker worker = workerRepository.findById(workerId)
+                .orElseThrow(() -> new RuntimeException("Personel bulunamadı!"));
+
+        task.setAssignedWorker(worker);
+        PickTask savedTask = pickTaskRepository.save(task);
         return pickTaskMapper.toResponseDto(savedTask);
     }
 }

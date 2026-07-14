@@ -2,6 +2,7 @@ package com.smartwarehouse.api.controller;
 
 import com.smartwarehouse.api.entity.PickTaskItem;
 import com.smartwarehouse.api.repository.PickTaskItemRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -9,14 +10,12 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("/api/v1/task-items")
 public class PickTaskItemController {
 
     private final PickTaskItemRepository pickTaskItemRepository;
 
-    public PickTaskItemController(PickTaskItemRepository pickTaskItemRepository) {
-        this.pickTaskItemRepository = pickTaskItemRepository;
-    }
 
     @PostMapping
     public ResponseEntity<PickTaskItem> addTaskItem(@RequestBody PickTaskItem taskItem) {
