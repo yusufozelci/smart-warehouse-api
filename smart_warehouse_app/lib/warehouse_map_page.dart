@@ -72,25 +72,44 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
   }
 
   void _sortTaskItems(TaskModel task) {
-    List<dynamic> sortedItems = List.from(task.items);
-    for (var item in sortedItems) {
+    if (_shelves.isEmpty) return;
+    List<dynamic> items = List.from(task.items);
+
+    for (var item in items) {
       var s = _shelves.firstWhere((sh) => sh['shelfCode'] == item['shelfCode'], orElse: () => null);
       item['_floor'] = s != null ? (s['floor'] ?? 1) : 1;
-      item['_y'] = s != null ? (s['coordinateY'] ?? 0) : 0;
       item['_x'] = s != null ? (s['coordinateX'] ?? 0) : 0;
+      item['_y'] = s != null ? (s['coordinateY'] ?? 0) : 0;
     }
 
-    sortedItems.sort((a, b) {
-      if (a['_floor'] != b['_floor']) return (a['_floor'] as int).compareTo(b['_floor'] as int);
-      if (a['_y'] != b['_y']) return (a['_y'] as num).compareTo(b['_y'] as num);
-      return (a['_x'] as num).compareTo(b['_x'] as num);
-    });
+    List<dynamic> sortedItems = [];
+    var floors = items.map((i) => i['_floor']).toSet().toList()..sort();
+
+    for (var floor in floors) {
+      var floorItems = items.where((i) => i['_floor'] == floor).toList();
+      double currentX = 80.0;
+      double currentY = 480.0;
+
+      while (floorItems.isNotEmpty) {
+        floorItems.sort((a, b) {
+          double distA = (a['_x'] - currentX).abs() + (a['_y'] - currentY).abs();
+          double distB = (b['_x'] - currentX).abs() + (b['_y'] - currentY).abs();
+          return distA.compareTo(distB);
+        });
+
+        var nearest = floorItems.removeAt(0);
+        sortedItems.add(nearest);
+        currentX = nearest['_x'].toDouble();
+        currentY = nearest['_y'].toDouble();
+      }
+    }
 
     task.items.clear();
     task.items.addAll(sortedItems);
   }
 
   Future<void> _fetchAllData() async {
+    setState(() => _isLoading = true);
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
@@ -104,7 +123,18 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         final tasks = await TaskService().getAllTasks();
         if (workerRes.statusCode == 200) {
           _workers = jsonDecode(workerRes.body);
-          tasks.sort((a, b) => b.id.compareTo(a.id));
+          tasks.sort((a, b) {
+            int getStatusPriority(String status) {
+              if (status == 'IN_PROGRESS') return 1;
+              if (status == 'PENDING') return 2;
+              return 3;
+            }
+            int pA = getStatusPriority(a.status);
+            int pB = getStatusPriority(b.status);
+            if (pA != pB) return pA.compareTo(pB);
+            return b.id.compareTo(a.id);
+          });
+
           _tasks = tasks;
         }
       }
@@ -116,12 +146,19 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
           _isLoading = false;
         });
 
-        if (widget.isWorkerMode && _focusedTask != null) {
+        if (_focusedTask != null) {
+          var updatedTask = _tasks.where((t) => t.id == _focusedTask!.id).firstOrNull;
+          if (updatedTask != null) {
+            _focusedTask = updatedTask;
+          }
           _sortTaskItems(_focusedTask!);
-          var firstItem = _focusedTask!.items.firstWhere((i) => i['isPicked'] != true, orElse: () => _focusedTask!.items.first);
-          var startShelf = _shelves.firstWhere((s) => s['shelfCode'] == firstItem['shelfCode'], orElse: () => null);
-          if (startShelf != null) {
-            _selectedFloor = startShelf['floor'] ?? 1;
+
+          if (widget.isWorkerMode) {
+            var firstItem = _focusedTask!.items.firstWhere((i) => i['isPicked'] != true, orElse: () => _focusedTask!.items.first);
+            var startShelf = _shelves.firstWhere((s) => s['shelfCode'] == firstItem['shelfCode'], orElse: () => null);
+            if (startShelf != null) {
+              _selectedFloor = startShelf['floor'] ?? 1;
+            }
           }
         }
 
@@ -240,8 +277,10 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     }
   }
 
-  List<Offset> _calculateRoutePoints() {
-    if (_focusedTask == null || _focusedTask!.items.isEmpty) return [];
+  RouteData _getRouteData() {
+    if (_focusedTask == null || _focusedTask!.items.isEmpty) {
+      return RouteData(points: [], segmentEnds: []);
+    }
     return RouteService.calculateRoute(_shelves, _focusedTask!.items, _selectedFloor);
   }
 
@@ -557,51 +596,86 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-
-    final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
-    int totalShelves = currentFloorShelves.length;
-    int occupiedShelves = currentFloorShelves.where((s) {
-      return _allProducts.any((p) => p['shelfCode'] == s['shelfCode'] && (p['stockQuantity'] ?? 0) > 0);
-    }).length;
-    int emptyShelves = totalShelves - occupiedShelves;
-
-    if (widget.isWorkerMode) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text("Görev İcrası (#${_focusedTask?.id ?? ''})", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-          backgroundColor: const Color(0xFF1A237E),
-          iconTheme: const IconThemeData(color: Colors.white),
-        ),
-        body: Column(
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Stack(
           children: [
-            Expanded(
-              flex: 5,
-              child: Container(
-                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 2))),
-                child: _buildMapViewer(currentFloorShelves, isMobile: true),
+            LayoutBuilder(
+                builder: (context, constraints) {
+                  bool isMobile = constraints.maxWidth < 800;
+
+                  if (isMobile) {
+                    if (_isLoading) return const Center(child: CircularProgressIndicator());
+                    final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
+                    int totalShelves = currentFloorShelves.length;
+                    int occupiedShelves = currentFloorShelves.where((s) {
+                      return _allProducts.any((p) => p['shelfCode'] == s['shelfCode'] && (p['stockQuantity'] ?? 0) > 0);
+                    }).length;
+                    int emptyShelves = totalShelves - occupiedShelves;
+
+                    if (widget.isWorkerMode) {
+                      return Column(
+                        children: [
+                          Expanded(
+                            flex: 5,
+                            child: Container(
+                              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 2))),
+                              child: _buildMapViewer(currentFloorShelves, isMobile: true),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 4,
+                            child: _buildWorkerActionPanel(),
+                          ),
+                        ],
+                      );
+                    }
+                    return _buildMobileLayout(constraints, currentFloorShelves, totalShelves, occupiedShelves, emptyShelves);
+                  }
+                  else {
+                    if (_isLoading && _shelves.isEmpty) return const Center(child: CircularProgressIndicator());
+                    final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
+                    int totalShelves = currentFloorShelves.length;
+                    int occupiedShelves = currentFloorShelves.where((s) {
+                      return _allProducts.any((p) => p['shelfCode'] == s['shelfCode'] && (p['stockQuantity'] ?? 0) > 0);
+                    }).length;
+                    int emptyShelves = totalShelves - occupiedShelves;
+
+                    return _buildDesktopLayout(constraints, currentFloorShelves, totalShelves, occupiedShelves, emptyShelves);
+                  }
+                }
+            ),
+            if (_isLoading && _shelves.isNotEmpty)
+              Positioned.fill(
+                  child: Container(
+                    color: Colors.white.withOpacity(0.5),
+                    child: const Center(child: CircularProgressIndicator(color: Color(0xFF6200EA))),
+                  )
               ),
-            ),
-            Expanded(
-              flex: 4,
-              child: _buildWorkerActionPanel(),
-            ),
+            if (Navigator.canPop(context))
+              Positioned(
+                top: 16,
+                left: 16,
+                child: Container(
+                  decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 10, offset: const Offset(0, 4))
+                      ]
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1A237E), size: 20),
+                    padding: const EdgeInsets.only(right: 2),
+                    tooltip: "Geri Dön",
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+              ),
+
           ],
         ),
-      );
-    }
-
-    return Container(
-      color: Colors.transparent,
-      child: LayoutBuilder(
-          builder: (context, constraints) {
-            bool isMobile = constraints.maxWidth < 800;
-            if (isMobile) {
-              return _buildMobileLayout(constraints, currentFloorShelves, totalShelves, occupiedShelves, emptyShelves);
-            } else {
-              return _buildDesktopLayout(constraints, currentFloorShelves, totalShelves, occupiedShelves, emptyShelves);
-            }
-          }
       ),
     );
   }
@@ -633,7 +707,16 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                   bool success = await TaskService().completeTask(_focusedTask!.id);
                   if (success) {
                     showGlobalNotification("Görev başarıyla tamamlandı!");
-                    if (mounted) Navigator.pop(context, true);
+                    if (!mounted) return;
+                    if (widget.isWorkerMode && Navigator.canPop(context)) {
+                      Navigator.pop(context, true);
+                    } else {
+                      setState(() {
+                        _focusedTask = null;
+                        _selectedShelf = null;
+                      });
+                      _fetchAllData();
+                    }
                   }
                 },
                 child: const Text("Görevi Sonlandır", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
@@ -651,16 +734,41 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade200))),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border(bottom: BorderSide(color: Colors.grey.shade200))
+            ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const Text("Toplama Listesi", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                Text("${_getCompletedRouteNodesCountForCurrentFloor()} / ${_focusedTask!.items.where((i){
-                  var s = _shelves.firstWhere((sh)=>sh['shelfCode']==i['shelfCode'], orElse:()=>null);
-                  return s != null && s['floor'] == _selectedFloor;
-                }).length} Bu Katta", style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+                const Text(
+                    "Toplama Listesi",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                      color: Colors.deepPurple.shade50,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.deepPurple.shade100)
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.check_circle_outline, color: Colors.deepPurple, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        "${_getCompletedRouteNodesCountForCurrentFloor()} / ${_focusedTask!.items.where((i){
+                          var s = _shelves.firstWhere((sh)=>sh['shelfCode']==i['shelfCode'], orElse:()=>null);
+                          return s != null && s['floor'] == _selectedFloor;
+                        }).length} Bu Katta",
+                        style: const TextStyle(color: Colors.deepPurple, fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -691,7 +799,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         margin: const EdgeInsets.only(bottom: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFF1A237E), width: 2)),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -706,9 +814,11 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildWorkerInfoBadge("Hedef Raf", item['shelfCode'] ?? '-', Icons.shelves, Colors.deepPurple),
-                  _buildWorkerInfoBadge("İstenen", "$requestedQty Adet", Icons.shopping_basket, Colors.blue),
-                  _buildWorkerInfoBadge("SKU", item['sku'] ?? '-', Icons.qr_code, Colors.orange),
+                  Expanded(child: _buildWorkerInfoBadge("Hedef Raf", item['shelfCode'] ?? '-', Icons.shelves, Colors.deepPurple)),
+                  const SizedBox(width: 4),
+                  Expanded(child: _buildWorkerInfoBadge("İstenen", "$requestedQty Adet", Icons.shopping_basket, Colors.blue)),
+                  const SizedBox(width: 4),
+                  Expanded(child: _buildWorkerInfoBadge("SKU", item['sku'] ?? '-', Icons.qr_code, Colors.orange)),
                 ],
               ),
               const SizedBox(height: 16),
@@ -721,6 +831,9 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                   label: const Text("Rafı ve Ürünü Tara", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                   onPressed: () async {
                     final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => QrScannerPage(expectedSku: item['sku'])));
+
+                    if (!mounted) return;
+
                     if (result == true) {
                       bool success = await TaskService().pickItem(_focusedTask!.id, item['productId']);
                       if (success) {
@@ -728,24 +841,64 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                           item['isPicked'] = true;
                         });
 
-                        var nextItem = _focusedTask!.items.firstWhere((i) => i['isPicked'] != true, orElse: () => null);
-                        if (nextItem != null) {
-                          var nextShelf = _shelves.firstWhere((s) => s['shelfCode'] == nextItem['shelfCode'], orElse: () => null);
-                          if (nextShelf != null && nextShelf['floor'] != null && nextShelf['floor'] != _selectedFloor) {
+                        int nextIndex = _focusedTask!.items.indexWhere((i) => i['isPicked'] != true);
+
+                        if (nextIndex != -1) {
+                          var nextItem = _focusedTask!.items[nextIndex];
+                          int nextFloor = nextItem['_floor'] ?? 1;
+
+                          if (nextFloor != _selectedFloor) {
                             setState(() {
-                              _selectedFloor = nextShelf['floor'];
+                              _selectedFloor = nextFloor;
+                              _selectedShelf = null;
                             });
                             _fitToScreen();
-                            showGlobalNotification("Kat değiştirildi: ${_selectedFloor}. Kata geçiniz!");
+                            showGlobalNotification("Kat değiştirildi: $nextFloor. Kata geçiniz!");
                           } else {
                             showGlobalNotification("Ürün okundu. Sıradaki hedefe ilerleyin!");
                           }
                         } else {
-                          showGlobalNotification("Son ürün okundu!");
+                          showGlobalNotification("Son ürün okundu! Görevi sonlandırabilirsiniz.");
                         }
                       } else {
                         showGlobalNotification("Ürün okutulurken bir hata oluştu!");
                       }
+                    }
+                    else if (result == false) {
+                      // KESİN ÇÖZÜM: SnackBar yerine ekranın ortasında çıkan Dialog!
+                      showDialog(
+                          context: context,
+                          builder: (BuildContext context) {
+                            return AlertDialog(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              title: const Row(
+                                children: [
+                                  Icon(Icons.cancel, color: Colors.red, size: 28),
+                                  SizedBox(width: 8),
+                                  Text("Yanlış Ürün!", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              content: const Text(
+                                "Yanlış barkod okuttunuz. Lütfen doğru ürünü bularak tekrar deneyin.",
+                                style: TextStyle(fontSize: 16),
+                              ),
+                              actions: [
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.red,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                        padding: const EdgeInsets.symmetric(vertical: 12)
+                                    ),
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text("Tamam", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              ],
+                            );
+                          }
+                      );
                     }
                   },
                 ),
@@ -781,14 +934,15 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
 
   Widget _buildWorkerInfoBadge(String title, String value, IconData icon, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
       decoration: BoxDecoration(color: color.withOpacity(0.05), borderRadius: BorderRadius.circular(8), border: Border.all(color: color.withOpacity(0.2))),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, color: color, size: 16),
           const SizedBox(height: 4),
-          Text(title, style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
-          Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+          Text(title, style: TextStyle(fontSize: 10, color: Colors.grey.shade600), maxLines: 1, overflow: TextOverflow.ellipsis),
+          Text(value, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color), maxLines: 1, overflow: TextOverflow.ellipsis),
         ],
       ),
     );
@@ -887,6 +1041,17 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                     ],
                   ),
                 ),
+
+                IconButton(
+                  icon: const Icon(Icons.refresh, color: Color(0xFF6200EA)),
+                  tooltip: "Verileri Yenile",
+                  onPressed: () {
+                    _fetchAllData();
+                    showGlobalNotification("Harita ve Görevler Güncellendi");
+                  },
+                ),
+                const SizedBox(width: 8),
+
                 if (!widget.isDashboard)
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6200EA), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
@@ -1174,12 +1339,20 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
 
                       if (_focusedTask != null && _focusedTask!.items.isNotEmpty)
                         Positioned.fill(
-                          child: CustomPaint(
-                            painter: RoutePainter(
-                              points: _calculateRoutePoints(),
-                              completedNodesCount: _getCompletedRouteNodesCountForCurrentFloor(), // GÜNCELLENEN PARAMETRE İSMİ
-                            ),
-                          ),
+                            child: Builder(
+                                builder: (context) {
+                                  var routeData = RouteService.calculateRoute(_shelves, _focusedTask!.items, _selectedFloor);
+                                  int completedCount = _getCompletedRouteNodesCountForCurrentFloor();
+
+                                  return CustomPaint(
+                                    painter: RoutePainter(
+                                      points: routeData.points,
+                                      segmentEnds: routeData.segmentEnds,
+                                      completedNodesCount: completedCount,
+                                    ),
+                                  );
+                                }
+                            )
                         ),
 
                       ...currentFloorShelves.map((shelf) {
@@ -1194,10 +1367,14 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                         int occupancy = ((totalWeight / 320.0) * 100).toInt();
                         if (totalWeight > 0 && occupancy == 0) occupancy = 1;
                         if (occupancy > 100) occupancy = 100;
-
                         bool isTarget = false;
+                        bool isCompletedTarget = false;
+
                         if (_focusedTask != null) {
                           isTarget = _focusedTask!.items.any((item) => item['shelfCode'] == shelf['shelfCode'] && item['isPicked'] != true);
+                          if (!isTarget) {
+                            isCompletedTarget = _focusedTask!.items.any((item) => item['shelfCode'] == shelf['shelfCode'] && item['isPicked'] == true);
+                          }
                         }
 
                         return Positioned(
@@ -1208,6 +1385,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                             occupancy: occupancy,
                             isSelected: _selectedShelf?['shelfCode'] == shelf['shelfCode'],
                             isTarget: isTarget,
+                            isCompletedTarget: isCompletedTarget,
                             onTap: widget.isDashboard || widget.isWorkerMode ? () {} : () => _focusOnShelf(shelf['shelfCode']),
                           ),
                         );
@@ -1235,6 +1413,27 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                       icon: const Icon(Icons.crop_free, color: Colors.deepPurple),
                       onPressed: () => _fitToScreen(),
                     ),
+                    if (isMobile) ...[
+                      const Divider(height: 1),
+                      PopupMenuButton<int>(
+                        initialValue: _selectedFloor,
+                        tooltip: "Kat Seç",
+                        offset: const Offset(-50, -120),
+                        icon: CircleAvatar(
+                          radius: 14,
+                          backgroundColor: Colors.deepPurple.shade50,
+                          child: Text("K$_selectedFloor", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.deepPurple)),
+                        ),
+                        onSelected: (v) {
+                          setState(() {
+                            _selectedFloor = v;
+                            _selectedShelf = null;
+                          });
+                          _fitToScreen();
+                        },
+                        itemBuilder: (context) => [1, 2, 3].map((v) => PopupMenuItem(value: v, child: Text("$v. Kat'a Geç"))).toList(),
+                      ),
+                    ]
                   ],
                 ),
               ),
@@ -1518,9 +1717,18 @@ class EnterpriseShelfWidget extends StatefulWidget {
   final int occupancy;
   final bool isSelected;
   final bool isTarget;
+  final bool isCompletedTarget;
   final VoidCallback onTap;
 
-  const EnterpriseShelfWidget({super.key, required this.shelf, required this.occupancy, required this.isSelected, this.isTarget = false, required this.onTap});
+  const EnterpriseShelfWidget({
+    super.key,
+    required this.shelf,
+    required this.occupancy,
+    required this.isSelected,
+    this.isTarget = false,
+    this.isCompletedTarget = false,
+    required this.onTap
+  });
 
   @override
   State<EnterpriseShelfWidget> createState() => _EnterpriseShelfWidgetState();
@@ -1556,14 +1764,18 @@ class _EnterpriseShelfWidgetState extends State<EnterpriseShelfWidget> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 width: 140,
-                height: 90,
-                padding: const EdgeInsets.all(8),
+                height: 95,
+                padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   color: isEmpty ? Colors.white : statusColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(
-                      color: widget.isTarget ? Colors.redAccent : (widget.isSelected ? const Color(0xFF6200EA) : (isEmpty ? Colors.grey.shade300 : statusColor)),
-                      width: widget.isTarget || widget.isSelected ? 3 : 2
+                      color: widget.isTarget
+                          ? Colors.redAccent
+                          : (widget.isCompletedTarget
+                          ? Colors.redAccent.withOpacity(0.3)
+                          : (widget.isSelected ? const Color(0xFF6200EA) : (isEmpty ? Colors.grey.shade300 : statusColor))),
+                      width: widget.isTarget || widget.isSelected || widget.isCompletedTarget ? 3 : 2
                   ),
                   boxShadow: [
                     if (_isHovered || widget.isSelected || widget.isTarget)
@@ -1571,54 +1783,95 @@ class _EnterpriseShelfWidgetState extends State<EnterpriseShelfWidget> {
                   ],
                 ),
                 child: isEmpty
-                    ? Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.add, color: Colors.grey, size: 28),
-                    const SizedBox(height: 5),
-                    Text(widget.shelf['shelfCode'].split('-').last, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                  ],
-                )
-                    : Column(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 4,
-                      children: List.generate((widget.occupancy / 33).ceil(), (_) => const Text("📦", style: TextStyle(fontSize: 16))),
-                    ),
-                    Container(
-                      height: 4,
-                      width: double.infinity,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2)),
-                      child: FractionallySizedBox(
-                        alignment: Alignment.centerLeft,
-                        widthFactor: widget.occupancy / 100,
-                        child: Container(decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(2))),
+                    ? FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.add, color: Colors.grey, size: 24),
+                      const SizedBox(height: 4),
+                      Text(
+                        widget.shelf['shelfCode'].split('-').last,
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey),
                       ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(widget.shelf['shelfCode'].split('-').last, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                        Text("${widget.occupancy}%", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: statusColor)),
-                      ],
-                    )
-                  ],
+                    ],
+                  ),
+                )
+                    : FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 2,
+                        children: List.generate(
+                          (widget.occupancy / 33).ceil(),
+                              (_) => const Text("📦", style: TextStyle(fontSize: 14)),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        height: 4,
+                        width: 110,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                        child: FractionallySizedBox(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: widget.occupancy / 100,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: statusColor,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            widget.shelf['shelfCode'].split('-').last,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            "${widget.occupancy}%",
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: statusColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ),
-
-        if (widget.isTarget)
-          const Positioned(
+        if (widget.isTarget || widget.isCompletedTarget)
+          Positioned(
             top: -10,
             right: -10,
             child: CircleAvatar(
               radius: 14,
-              backgroundColor: Colors.redAccent,
-              child: Icon(Icons.location_on, size: 18, color: Colors.white),
+              backgroundColor: widget.isTarget ? Colors.redAccent : Colors.grey.shade400,
+              child: Icon(
+                  widget.isCompletedTarget ? Icons.check : Icons.location_on,
+                  size: 18,
+                  color: Colors.white
+              ),
             ),
           )
       ],

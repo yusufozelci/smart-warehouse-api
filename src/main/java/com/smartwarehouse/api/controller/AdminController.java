@@ -4,6 +4,7 @@ import com.smartwarehouse.api.entity.TaskStatus;
 import com.smartwarehouse.api.repository.ProductRepository;
 import com.smartwarehouse.api.repository.PickTaskRepository;
 import com.smartwarehouse.api.repository.WorkerRepository;
+import com.smartwarehouse.api.service.SystemErrorLogService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +22,7 @@ public class AdminController {
     private final WorkerRepository workerRepository;
     private final ProductRepository productRepository;
     private final PickTaskRepository pickTaskRepository;
+    private final SystemErrorLogService logService;
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Long>> getDashboardStats() {
@@ -28,7 +30,7 @@ public class AdminController {
         stats.put("activeWorkers", workerRepository.count());
         stats.put("totalProducts", productRepository.count());
         stats.put("completedTasks", pickTaskRepository.countByStatus(TaskStatus.COMPLETED));
-        stats.put("errorLogs", 0L);
+        stats.put("errorLogs", logService.getLogCount());
 
         return ResponseEntity.ok(stats);
     }

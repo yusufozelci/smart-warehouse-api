@@ -13,6 +13,8 @@ class WebSocketService {
   List<Map<String, dynamic>> messages = [];
   final List<Function(Map<String, dynamic>)> _listeners = [];
 
+  final List<Function(Map<String, dynamic>)> _errorListeners = [];
+
   void connect(String url) {
     if (stompClient != null && stompClient!.connected) return;
 
@@ -35,6 +37,24 @@ class WebSocketService {
               }
             },
           );
+
+          stompClient!.subscribe(
+            destination: '/topic/admin/errors',
+            callback: (frame) {
+              if (frame.body != null) {
+                Map<String, dynamic> data = {};
+                try {
+                  data = json.decode(frame.body!);
+                } catch (e) {
+                  data = {"message": frame.body};
+                }
+
+                for (var listener in _errorListeners) {
+                  listener(data);
+                }
+              }
+            },
+          );
         },
       ),
     );
@@ -47,5 +67,13 @@ class WebSocketService {
 
   void unsubscribe(Function(Map<String, dynamic>) listener) {
     _listeners.remove(listener);
+  }
+
+  void subscribeToErrors(Function(Map<String, dynamic>) listener) {
+    _errorListeners.add(listener);
+  }
+
+  void unsubscribeFromErrors(Function(Map<String, dynamic>) listener) {
+    _errorListeners.remove(listener);
   }
 }

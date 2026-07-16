@@ -9,11 +9,11 @@ import 'package:smart_warehouse_app/login_page.dart';
 import 'package:smart_warehouse_app/services/websocket_service.dart';
 import 'package:smart_warehouse_app/global_utils.dart';
 import 'package:smart_warehouse_app/worker_management_page.dart';
-import 'dummy_page.dart';
 import 'inventory_page.dart';
 import 'product_catalog_page.dart';
 import 'warehouse_map_page.dart';
 import 'completed_tasks_page.dart';
+import 'error_logs_page.dart';
 
 class AdminHomePage extends StatefulWidget {
   const AdminHomePage({super.key});
@@ -38,10 +38,17 @@ class _AdminHomePageState extends State<AdminHomePage> {
   @override
   void initState() {
     super.initState();
-    WebSocketService.instance.connect("ws://localhost:8080/ws-warehouse");
+     WebSocketService.instance.connect("ws://localhost:8080/ws-warehouse");
     _fetchStats();
     _liveUpdates = List.from(WebSocketService.instance.messages);
     WebSocketService.instance.subscribe(_onTaskReceived);
+    WebSocketService.instance.subscribeToErrors((data) {
+      if (mounted) {
+        setState(() {
+          _errorLogs++;
+        });
+      }
+    });
   }
 
   void _onTaskReceived(Map<String, dynamic> data) {
@@ -306,7 +313,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
       _buildModernStatCard("Toplam Ürün", "$_totalProducts", Icons.inventory_2, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductCatalogPage()))),
       _buildModernStatCard("Aktif Personel", "$_activeWorkers", Icons.people, Colors.blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WorkerManagementPage(initialFilter: "ACTIVE_ONLY")))),
       _buildModernStatCard("Tamamlanan", "$_completedTasks", Icons.check_circle, Colors.green, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CompletedTasksPage()))),
-      _buildModernStatCard("Hata Kaydı", "$_errorLogs", Icons.error, Colors.red, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DummyPage(title: "Hata Kayıtları", icon: Icons.error, color: Colors.red)))),
+      _buildModernStatCard("Hata Kaydı", "$_errorLogs", Icons.error, Colors.red, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ErrorLogsPage()))),
     ];
   }
 

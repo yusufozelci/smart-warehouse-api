@@ -57,7 +57,7 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
         throw Exception("Veri çekilemedi: ${response.statusCode}");
       }
     } catch (e) {
-      print("Hata: $e");
+      debugPrint("Hata: $e");
       setState(() => _isLoading = false);
     }
   }
@@ -66,14 +66,14 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
     bool confirm = await showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Dikkat!"),
+        title: const Text("Dikkat!", style: TextStyle(fontWeight: FontWeight.bold)),
         content: Text("$name adlı personeli silmek istediğinize emin misiniz?"),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("İptal")),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("İptal", style: TextStyle(color: Colors.grey))),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text("Sil", style: TextStyle(color: Colors.white)),
+            child: const Text("Sil", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -99,14 +99,62 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(response.body), backgroundColor: Colors.redAccent, duration: const Duration(seconds: 4)));
       }
     } catch (e) {
-      print("Hata: $e");
+      debugPrint("Hata: $e");
     }
+  }
+
+  // Sunumlar ve testler için kullanılacak Mock Twilio SMS Doğrulama Sistemi
+  Future<void> _sendMockTwilioSms(String? phone, String name) async {
+    if (phone == null || phone.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Hata: Kayıtlı telefon numarası bulunamadı!", style: TextStyle(color: Colors.white)), backgroundColor: Colors.redAccent)
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.message, color: Colors.blueAccent),
+            SizedBox(width: 10),
+            Text("SMS Doğrulama Testi", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text("Twilio üzerinden\n$phone\nnumarasına doğrulama kodu gönderiliyor...", textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+
+    // İşlemi simüle ediyoruz
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    Navigator.pop(context); // Loading dialogunu kapat
+
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("✅ $name için hücresel doğrulama kodu iletildi (Twilio Test)."),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+        )
+    );
   }
 
   void _showEditWorkerDialog(Map<String, dynamic> worker) {
     final firstNameCtrl = TextEditingController(text: worker['firstName']);
     final lastNameCtrl = TextEditingController(text: worker['lastName']);
     final emailCtrl = TextEditingController(text: worker['email']);
+    // Tip güvenliği: Veritabanından string veya null dönmesini garanti altına aldık
+    final phoneCtrl = TextEditingController(text: worker['phoneNumber']?.toString() ?? "");
     String _selectedRole = worker['role'] ?? "WORKER";
     bool _isSubmitting = false;
 
@@ -121,7 +169,7 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                   children: [
                     Icon(Icons.edit, color: primaryColor),
                     const SizedBox(width: 10),
-                    Text("Düzenle: ${worker['firstName']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Expanded(child: Text("Düzenle: ${worker['firstName']}", style: const TextStyle(fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
                   ],
                 ),
                 content: SingleChildScrollView(
@@ -135,6 +183,12 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                         TextField(controller: lastNameCtrl, decoration: const InputDecoration(labelText: "Soyadı", prefixIcon: Icon(Icons.badge_outlined))),
                         const SizedBox(height: 10),
                         TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email_outlined))),
+                        const SizedBox(height: 10),
+                        TextField(
+                            controller: phoneCtrl,
+                            keyboardType: TextInputType.phone,
+                            decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android))
+                        ),
                         const SizedBox(height: 15),
                         DropdownButtonFormField<String>(
                           value: _selectedRole,
@@ -175,6 +229,7 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                             "firstName": firstNameCtrl.text,
                             "lastName": lastNameCtrl.text,
                             "email": emailCtrl.text,
+                            "phoneNumber": phoneCtrl.text,
                             "role": _selectedRole,
                           }),
                         );
@@ -189,7 +244,7 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Hata: ${response.statusCode}"), backgroundColor: Colors.red));
                         }
                       } catch (e) {
-                        print("Güncelleme Hatası: $e");
+                        debugPrint("Güncelleme Hatası: $e");
                       } finally {
                         setDialogState(() => _isSubmitting = false);
                       }
@@ -210,6 +265,7 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
     final TextEditingController _firstNameCtrl = TextEditingController();
     final TextEditingController _lastNameCtrl = TextEditingController();
     final TextEditingController _emailCtrl = TextEditingController();
+    final TextEditingController _phoneCtrl = TextEditingController();
     final TextEditingController _passwordCtrl = TextEditingController();
     String _selectedRole = "WORKER";
     bool _isSubmitting = false;
@@ -241,6 +297,12 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                       const SizedBox(height: 10),
                       TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: "Email (Kullanıcı Adı)", prefixIcon: Icon(Icons.email_outlined))),
                       const SizedBox(height: 10),
+                      TextField(
+                          controller: _phoneCtrl,
+                          keyboardType: TextInputType.phone,
+                          decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android))
+                      ),
+                      const SizedBox(height: 10),
                       TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(labelText: "Şifre", prefixIcon: Icon(Icons.lock_outline))),
                       const SizedBox(height: 15),
                       DropdownButtonFormField<String>(
@@ -269,7 +331,7 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                       ? null
                       : () async {
                     if (_firstNameCtrl.text.isEmpty || _lastNameCtrl.text.isEmpty || _emailCtrl.text.isEmpty || _passwordCtrl.text.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lütfen tüm alanları doldurun!"), backgroundColor: Colors.red));
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lütfen zorunlu alanları doldurun!"), backgroundColor: Colors.red));
                       return;
                     }
 
@@ -280,12 +342,13 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                       String? token = prefs.getString('token');
 
                       final response = await http.post(
-                        Uri.parse('$baseUrl/api/v1/workers'),
+                        Uri.parse('$baseUrl/api/auth/register'),
                         headers: {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"},
                         body: jsonEncode({
                           "firstName": _firstNameCtrl.text,
                           "lastName": _lastNameCtrl.text,
                           "email": _emailCtrl.text,
+                          "phoneNumber": _phoneCtrl.text,
                           "password": _passwordCtrl.text,
                           "role": _selectedRole
                         }),
@@ -301,7 +364,7 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Hata: ${response.body}"), backgroundColor: Colors.red));
                       }
                     } catch (e) {
-                      print("Ekleme Hatası: $e");
+                      debugPrint("Ekleme Hatası: $e");
                     } finally {
                       setDialogState(() => _isSubmitting = false);
                     }
@@ -369,6 +432,9 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 5),
+                  if (worker['phoneNumber'] != null && worker['phoneNumber'].toString().trim().isNotEmpty)
+                    Text("📞 ${worker['phoneNumber']}", style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+                  const SizedBox(height: 5),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(color: isAdmin ? Colors.red.shade50 : Colors.green.shade50, borderRadius: BorderRadius.circular(8)),
@@ -380,7 +446,12 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.edit, color: Colors.blue),
+                    icon: const Icon(Icons.sms_outlined, color: Colors.blueAccent),
+                    onPressed: () => _sendMockTwilioSms(worker['phoneNumber']?.toString(), worker['firstName']),
+                    tooltip: "SMS Gönder (Twilio Test)",
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.edit, color: Colors.black54),
                     onPressed: () => _showEditWorkerDialog(worker),
                     tooltip: "Düzenle",
                   ),

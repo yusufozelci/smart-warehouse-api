@@ -68,4 +68,7 @@ public class Worker extends BaseEntity implements UserDetails {
     public boolean isEnabled() {
         return true;
     }
+
+    @Column(name = "phone_number")
+    private String phoneNumber;
 }

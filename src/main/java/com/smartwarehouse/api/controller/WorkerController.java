@@ -33,7 +33,8 @@ public class WorkerController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<WorkerResponseDto> updateWorker(@PathVariable Long id, @RequestBody WorkerRequestDto request) {
-        return ResponseEntity.ok(workerService.updateWorker(id, request));
+    public ResponseEntity<String> updateWorker(@PathVariable Long id, @RequestBody WorkerRequestDto request) {
+        workerService.updateWorker(id, request);
+        return ResponseEntity.ok("Personel bilgileri başarıyla güncellendi.");
     }
 }

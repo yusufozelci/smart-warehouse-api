@@ -29,6 +29,27 @@ class _InventoryPageState extends State<InventoryPage> {
     _fetchProducts();
   }
 
+  Future<void> _sendErrorToBackend(String errorMessage) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? token = prefs.getString('token');
+
+    try {
+      await http.post(
+        Uri.parse('$baseUrl/api/admin/logs'),
+        headers: {
+          "Content-Type": "application/json",
+          if (token != null) "Authorization": "Bearer $token"
+        },
+        body: jsonEncode({
+          "message": errorMessage,
+          "stackTrace": "inventory_page.dart - Raf Kapasite Kontrolü (Flutter Frontend)"
+        }),
+      );
+    } catch (e) {
+      print("Frontend hatası sunucuya iletilemedi: $e");
+    }
+  }
+
   Future<void> _fetchProducts() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -106,17 +127,18 @@ class _InventoryPageState extends State<InventoryPage> {
                   currentShelfWeight += (p['stockQuantity'] ?? 0).toDouble() * (p['weight'] ?? 0.0).toDouble();
                 }
               }
-
               if (currentShelfWeight + addedWeight > 320.0) {
+                String errorMsg = "Raf kapasitesi (320 kg) aşılıyor!\nMevcut: ${currentShelfWeight.toStringAsFixed(1)} kg | İstenen: ${addedWeight.toStringAsFixed(1)} kg";
+
                 ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(
-                          "HATA: Raf kapasitesi (320 kg) aşılıyor!\nMevcut Ağırlık: ${currentShelfWeight.toStringAsFixed(1)} kg | Eklenmek İstenen: ${addedWeight.toStringAsFixed(1)} kg"
-                      ),
+                      content: Text(errorMsg),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 4),
                     )
                 );
+
+                _sendErrorToBackend(errorMsg);
                 return;
               }
 
@@ -166,7 +188,12 @@ class _InventoryPageState extends State<InventoryPage> {
     if (response.statusCode == 200) {
       _fetchProducts();
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Hata: ${response.statusCode} - ${response.body}")));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("İşlem Başarısız: ${response.body}"),
+            backgroundColor: Colors.red.shade600,
+          )
+      );
     }
   }
 
@@ -299,17 +326,19 @@ class _InventoryPageState extends State<InventoryPage> {
               }
 
               if (currentShelfWeight + addedWeight > 320.0) {
+                String errorMsg = "Raf kapasitesi (320 kg) aşılıyor!\nMevcut: ${currentShelfWeight.toStringAsFixed(1)} kg | İstenen: ${addedWeight.toStringAsFixed(1)} kg";
+
                 ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text(
-                          "Hata: Raf kapasitesi (320 kg) aşılıyor!\nMevcut: ${currentShelfWeight.toStringAsFixed(1)} kg | Eklenmek İstenen: ${addedWeight.toStringAsFixed(1)} kg"
-                      ),
+                      content: Text(errorMsg),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 4),
                     )
                 );
+                _sendErrorToBackend(errorMsg);
                 return;
               }
+              // -----------------------------------------------------
 
               SharedPreferences prefs = await SharedPreferences.getInstance();
               String? token = prefs.getString('token');
@@ -357,7 +386,20 @@ class _InventoryPageState extends State<InventoryPage> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text("Stok Yönetimi", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                IconButton(icon: Icon(Icons.add_box, color: primaryColor, size: 28), onPressed: _showAddProductDialog),
+                ElevatedButton.icon(
+                  onPressed: _showAddProductDialog,
+                  icon: const Icon(Icons.add, color: Colors.white, size: 20),
+                  label: const Text(
+                      "Yeni Ürün Ekle",
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue.shade700,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    elevation: 2,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                ),
               ],
             ),
           ),

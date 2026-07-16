@@ -2,18 +2,17 @@ package com.smartwarehouse.api.service;
 
 import com.smartwarehouse.api.entity.Shelf;
 import com.smartwarehouse.api.repository.ShelfRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-
+@Slf4j
+@RequiredArgsConstructor
 @Service
 public class WarehouseGraphService {
 
     private final ShelfRepository shelfRepository;
-
-    public WarehouseGraphService(ShelfRepository shelfRepository) {
-        this.shelfRepository = shelfRepository;
-    }
 
     public int calculateDistance(Shelf sourceShelf, Shelf targetShelf) {
         return Math.abs(sourceShelf.getCoordinateX() - targetShelf.getCoordinateX()) +
