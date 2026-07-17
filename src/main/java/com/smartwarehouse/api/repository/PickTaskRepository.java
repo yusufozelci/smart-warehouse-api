@@ -13,18 +13,18 @@ import java.util.List;
 @Repository
 public interface PickTaskRepository extends JpaRepository<PickTask, Long> {
     @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
-    List<PickTask> findByAssignedWorkerAndStatusIn(Worker worker, List<TaskStatus> statuses);
+    List<PickTask> findByAssignedWorkerAndStatusInAndIsDeletedFalse(Worker worker, List<TaskStatus> statuses);
 
     @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
-    List<PickTask> findByAssignedWorkerAndStatus(Worker worker, TaskStatus status);
-
-    @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf"})
-    @Query("SELECT p FROM PickTask p")
-    List<PickTask> findByStatus(TaskStatus status);
-
-    @NonNull
-    @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
-    List<PickTask> findAll();
-
+    List<PickTask> findByAssignedWorkerAndStatusAndIsDeletedFalse(Worker worker, TaskStatus status);
     long countByStatus(TaskStatus status);
+
+    @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
+    List<PickTask> findByIsDeletedTrueOrderByUpdatedAtDesc();
+
+    @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
+    List<PickTask> findByAssignedWorkerAndIsDeletedTrueOrderByUpdatedAtDesc(Worker worker);
+
+    @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
+    List<PickTask> findAllByOrderByCreatedAtDesc();
 }

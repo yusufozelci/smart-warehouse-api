@@ -12,5 +12,6 @@ public class PickTaskResponseDto {
     private String assignedWorkerName;
     private List<PickTaskItemResponseDto> items;
     private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 
 }

@@ -6,6 +6,7 @@ import com.smartwarehouse.api.entity.Worker;
 import com.smartwarehouse.api.repository.WorkerRepository;
 import com.smartwarehouse.api.security.JwtService;
 import com.smartwarehouse.api.service.AuthService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -27,7 +28,7 @@ public class AuthController {
     private final AuthService authService;
 
     @PostMapping("/register")
-    public ResponseEntity<String> register(@RequestBody WorkerRequestDto request) {
+    public ResponseEntity<String> register(@Valid @RequestBody WorkerRequestDto request) {
         Worker worker = new Worker();
         worker.setFirstName(request.getFirstName());
         worker.setLastName(request.getLastName());
@@ -42,7 +43,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponseDto> login(@RequestBody AuthRequestDto request) {
+    public ResponseEntity<AuthResponseDto> login(@Valid @RequestBody AuthRequestDto request) {
         System.out.println("Giriş Denemesi: " + request.getEmail());
 
         authenticationManager.authenticate(
@@ -56,7 +57,7 @@ public class AuthController {
     }
 
     @PostMapping("/forgot-password")
-    public ResponseEntity<?> forgotPassword(@RequestBody ForgotPasswordRequestDto request) {
+    public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequestDto request) {
         boolean isSms = "SMS".equalsIgnoreCase(request.getDeliveryMethod());
         if (!isSms) {
             boolean userExists = workerRepository.findByEmail(request.getContactInfo()).isPresent();
@@ -82,7 +83,7 @@ public class AuthController {
     }
 
     @PostMapping("/reset-password")
-    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequestDto request) {
+    public ResponseEntity<?> resetPassword(@Valid @RequestBody ResetPasswordRequestDto request) {
         try {
             authService.resetPassword(request.getContactInfo(), request.getNewPassword());
             return ResponseEntity.ok(Map.of("message", "Şifreniz başarıyla güncellendi."));

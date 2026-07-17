@@ -132,13 +132,13 @@ public class PickTaskService {
 
     @Transactional(readOnly = true)
     public List<PickTask> findAllTasks() {
-        return pickTaskRepository.findAll();
+        return pickTaskRepository.findAllByOrderByCreatedAtDesc();
     }
 
     @Transactional(readOnly = true)
     public List<PickTask> getPendingTasksForWorker(Worker worker) {
         List<TaskStatus> activeStatuses = Arrays.asList(TaskStatus.PENDING, TaskStatus.IN_PROGRESS);
-        return pickTaskRepository.findByAssignedWorkerAndStatusIn(worker, activeStatuses);
+        return pickTaskRepository.findByAssignedWorkerAndStatusInAndIsDeletedFalse(worker, activeStatuses);
     }
 
     @Transactional
@@ -164,6 +164,7 @@ public class PickTaskService {
         Map<String, Object> payload = new HashMap<>();
         payload.put("message", "Görev " + savedTask.getTaskCode() + " tamamlandı!");
         payload.put("boxId", savedTask.getId());
+        payload.put("taskId", savedTask.getId());
         payload.put("workerId", savedTask.getAssignedWorker() != null ? savedTask.getAssignedWorker().getId() : "Bilinmiyor");
         messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
 
@@ -174,7 +175,7 @@ public class PickTaskService {
 
     @Transactional(readOnly = true)
     public List<PickTask> getCompletedTasksForWorker(Worker worker) {
-        return pickTaskRepository.findByAssignedWorkerAndStatus(worker, TaskStatus.COMPLETED);
+        return pickTaskRepository.findByAssignedWorkerAndStatusAndIsDeletedFalse(worker, TaskStatus.COMPLETED);
     }
 
     @Transactional
@@ -238,5 +239,52 @@ public class PickTaskService {
         log.info("Görev (ID: {}) manuel olarak Personele (ID: {}) atandı.", taskId, workerId);
 
         return pickTaskMapper.toResponseDto(savedTask);
+    }
+
+    @Transactional
+    public PickTaskResponseDto addItemToTask(Long taskId, PickTaskItemRequestDto itemDto) {
+        PickTask task = pickTaskRepository.findById(taskId)
+                .orElseThrow(() -> {
+                    log.error("Ürün ekleme hatası: Görev bulunamadı! ID: {}", taskId);
+                    return new RuntimeException("Görev bulunamadı!");
+                });
+
+        if (task.getStatus() == TaskStatus.COMPLETED) {
+            throw new RuntimeException("Tamamlanmış görevlere ürün eklenemiyor!");
+        }
+
+        Product product = productRepository.findById(itemDto.getProductId())
+                .orElseThrow(() -> {
+                    log.error("Ürün ekleme hatası: Ürün bulunamadı! ID: {}", itemDto.getProductId());
+                    return new RuntimeException("Ürün bulunamadı!");
+                });
+
+        PickTaskItem newItem = new PickTaskItem();
+        newItem.setProduct(product);
+        newItem.setQuantity(itemDto.getQuantity());
+        newItem.setPicked(false);
+
+        task.addItem(newItem);
+        PickTask savedTask = pickTaskRepository.save(task);
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "TASK_UPDATED");
+        payload.put("message", "Görev içeriği güncellendi");
+        payload.put("taskId", savedTask.getId());
+        messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
+
+        log.info("Görev (ID: {}) için yeni ürün eklendi. Ürün ID: {}", taskId, itemDto.getProductId());
+
+        return pickTaskMapper.toResponseDto(savedTask);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PickTask> getDeletedTasks() {
+        return pickTaskRepository.findByIsDeletedTrueOrderByUpdatedAtDesc();
+    }
+
+    @Transactional(readOnly = true)
+    public List<PickTask> getDeletedTasksForWorker(Worker worker) {
+        return pickTaskRepository.findByAssignedWorkerAndIsDeletedTrueOrderByUpdatedAtDesc(worker);
     }
 }

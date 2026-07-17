@@ -16,11 +16,18 @@ public class PickTaskMapper {
 
     public PickTaskResponseDto toResponseDto(PickTask pickTask) {
         if (pickTask == null) return null;
-
         PickTaskResponseDto dto = new PickTaskResponseDto();
         dto.setId(pickTask.getId());
         dto.setStatus(pickTask.getStatus().name());
+
+        if (pickTask.getIsDeleted() != null && pickTask.getIsDeleted()) {
+            dto.setStatus("DELETED");
+        } else {
+            dto.setStatus(pickTask.getStatus().name());
+        }
+
         dto.setCreatedAt(pickTask.getCreatedAt());
+        dto.setUpdatedAt(pickTask.getUpdatedAt());
         if (pickTask.getAssignedWorker() != null) {
             String fullName = pickTask.getAssignedWorker().getFirstName() + " " +
                     pickTask.getAssignedWorker().getLastName();
