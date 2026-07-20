@@ -103,7 +103,6 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
     }
   }
 
-  // Sunumlar ve testler için kullanılacak Mock Twilio SMS Doğrulama Sistemi
   Future<void> _sendMockTwilioSms(String? phone, String name) async {
     if (phone == null || phone.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -135,10 +134,9 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
       ),
     );
 
-    // İşlemi simüle ediyoruz
     await Future.delayed(const Duration(seconds: 2));
     if (!mounted) return;
-    Navigator.pop(context); // Loading dialogunu kapat
+    Navigator.pop(context);
 
     ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -150,10 +148,10 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
   }
 
   void _showEditWorkerDialog(Map<String, dynamic> worker) {
+    final _formKey = GlobalKey<FormState>();
     final firstNameCtrl = TextEditingController(text: worker['firstName']);
     final lastNameCtrl = TextEditingController(text: worker['lastName']);
     final emailCtrl = TextEditingController(text: worker['email']);
-    // Tip güvenliği: Veritabanından string veya null dönmesini garanti altına aldık
     final phoneCtrl = TextEditingController(text: worker['phoneNumber']?.toString() ?? "");
     String _selectedRole = worker['role'] ?? "WORKER";
     bool _isSubmitting = false;
@@ -175,33 +173,54 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                 content: SingleChildScrollView(
                   child: SizedBox(
                     width: 400,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TextField(controller: firstNameCtrl, decoration: const InputDecoration(labelText: "Adı", prefixIcon: Icon(Icons.person_outline))),
-                        const SizedBox(height: 10),
-                        TextField(controller: lastNameCtrl, decoration: const InputDecoration(labelText: "Soyadı", prefixIcon: Icon(Icons.badge_outlined))),
-                        const SizedBox(height: 10),
-                        TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email_outlined))),
-                        const SizedBox(height: 10),
-                        TextField(
-                            controller: phoneCtrl,
-                            keyboardType: TextInputType.phone,
-                            decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android))
-                        ),
-                        const SizedBox(height: 15),
-                        DropdownButtonFormField<String>(
-                          value: _selectedRole,
-                          decoration: const InputDecoration(labelText: "Rolü", prefixIcon: Icon(Icons.security)),
-                          items: const [
-                            DropdownMenuItem(value: "WORKER", child: Text("Saha Personeli (Worker)")),
-                            DropdownMenuItem(value: "ADMIN", child: Text("Yönetici (Admin)")),
-                          ],
-                          onChanged: (val) {
-                            if (val != null) setDialogState(() => _selectedRole = val);
-                          },
-                        ),
-                      ],
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextFormField(
+                            controller: firstNameCtrl,
+                            decoration: const InputDecoration(labelText: "Adı", prefixIcon: Icon(Icons.person_outline)),
+                            validator: (value) => value == null || value.isEmpty ? 'İsim boş olamaz.' : null,
+                          ),
+                          const SizedBox(height: 10),
+                          TextFormField(
+                            controller: lastNameCtrl,
+                            decoration: const InputDecoration(labelText: "Soyadı", prefixIcon: Icon(Icons.badge_outlined)),
+                            validator: (value) => value == null || value.isEmpty ? 'Soyisim boş olamaz.' : null,
+                          ),
+                          const SizedBox(height: 10),
+                          TextFormField(
+                            controller: emailCtrl,
+                            decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email_outlined)),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) return 'E-posta boş olamaz.';
+                              if (!RegExp(r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+").hasMatch(value)) {
+                                return 'Geçerli bir e-posta adresi girin.';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 10),
+                          TextFormField(
+                              controller: phoneCtrl,
+                              keyboardType: TextInputType.phone,
+                              decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android))
+                          ),
+                          const SizedBox(height: 15),
+                          DropdownButtonFormField<String>(
+                            value: _selectedRole,
+                            decoration: const InputDecoration(labelText: "Rolü", prefixIcon: Icon(Icons.security)),
+                            items: const [
+                              DropdownMenuItem(value: "WORKER", child: Text("Saha Personeli (Worker)")),
+                              DropdownMenuItem(value: "ADMIN", child: Text("Yönetici (Admin)")),
+                            ],
+                            onChanged: (val) {
+                              if (val != null) setDialogState(() => _selectedRole = val);
+                            },
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -213,6 +232,8 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(backgroundColor: primaryColor, foregroundColor: Colors.white),
                     onPressed: _isSubmitting ? null : () async {
+                      if (!_formKey.currentState!.validate()) return;
+
                       setDialogState(() => _isSubmitting = true);
 
                       try {
@@ -262,13 +283,15 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
   }
 
   void _showAddWorkerDialog() {
-    final TextEditingController _firstNameCtrl = TextEditingController();
-    final TextEditingController _lastNameCtrl = TextEditingController();
-    final TextEditingController _emailCtrl = TextEditingController();
-    final TextEditingController _phoneCtrl = TextEditingController();
-    final TextEditingController _passwordCtrl = TextEditingController();
+    final _formKey = GlobalKey<FormState>();
+    final _firstNameCtrl = TextEditingController();
+    final _lastNameCtrl = TextEditingController();
+    final _emailCtrl = TextEditingController();
+    final _phoneCtrl = TextEditingController();
+    final _passwordCtrl = TextEditingController();
     String _selectedRole = "WORKER";
     bool _isSubmitting = false;
+    bool _obscurePassword = true;
 
     showDialog(
       context: context,
@@ -288,35 +311,72 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
               content: SingleChildScrollView(
                 child: SizedBox(
                   width: 400,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(controller: _firstNameCtrl, decoration: const InputDecoration(labelText: "Adı", prefixIcon: Icon(Icons.person_outline))),
-                      const SizedBox(height: 10),
-                      TextField(controller: _lastNameCtrl, decoration: const InputDecoration(labelText: "Soyadı", prefixIcon: Icon(Icons.badge_outlined))),
-                      const SizedBox(height: 10),
-                      TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: "Email (Kullanıcı Adı)", prefixIcon: Icon(Icons.email_outlined))),
-                      const SizedBox(height: 10),
-                      TextField(
-                          controller: _phoneCtrl,
-                          keyboardType: TextInputType.phone,
-                          decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android))
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(controller: _passwordCtrl, obscureText: true, decoration: const InputDecoration(labelText: "Şifre", prefixIcon: Icon(Icons.lock_outline))),
-                      const SizedBox(height: 15),
-                      DropdownButtonFormField<String>(
-                        value: _selectedRole,
-                        decoration: const InputDecoration(labelText: "Rolü", prefixIcon: Icon(Icons.security)),
-                        items: const [
-                          DropdownMenuItem(value: "WORKER", child: Text("Saha Personeli (Worker)")),
-                          DropdownMenuItem(value: "ADMIN", child: Text("Yönetici (Admin)")),
-                        ],
-                        onChanged: (val) {
-                          if (val != null) setDialogState(() => _selectedRole = val);
-                        },
-                      ),
-                    ],
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextFormField(
+                          controller: _firstNameCtrl,
+                          decoration: const InputDecoration(labelText: "Adı", prefixIcon: Icon(Icons.person_outline)),
+                          validator: (value) => value == null || value.isEmpty ? 'İsim boş olamaz.' : null,
+                        ),
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          controller: _lastNameCtrl,
+                          decoration: const InputDecoration(labelText: "Soyadı", prefixIcon: Icon(Icons.badge_outlined)),
+                          validator: (value) => value == null || value.isEmpty ? 'Soyisim boş olamaz.' : null,
+                        ),
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          controller: _emailCtrl,
+                          decoration: const InputDecoration(labelText: "Email (Kullanıcı Adı)", prefixIcon: Icon(Icons.email_outlined)),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) return 'E-posta boş olamaz.';
+                            if (!RegExp(r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+").hasMatch(value)) {
+                              return 'Geçerli bir e-posta adresi girin.';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        TextFormField(
+                            controller: _phoneCtrl,
+                            keyboardType: TextInputType.phone,
+                            decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android))
+                        ),
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          controller: _passwordCtrl,
+                          obscureText: _obscurePassword,
+                          decoration: InputDecoration(
+                            labelText: "Şifre",
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            suffixIcon: IconButton(
+                              icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                              onPressed: () => setDialogState(() => _obscurePassword = !_obscurePassword),
+                            ),
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) return 'Şifre boş olamaz.';
+                            if (value.length < 8) return 'Şifre en az 8 karakter olmalıdır.';
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 15),
+                        DropdownButtonFormField<String>(
+                          value: _selectedRole,
+                          decoration: const InputDecoration(labelText: "Rolü", prefixIcon: Icon(Icons.security)),
+                          items: const [
+                            DropdownMenuItem(value: "WORKER", child: Text("Saha Personeli (Worker)")),
+                            DropdownMenuItem(value: "ADMIN", child: Text("Yönetici (Admin)")),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) setDialogState(() => _selectedRole = val);
+                          },
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -330,10 +390,7 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                   onPressed: _isSubmitting
                       ? null
                       : () async {
-                    if (_firstNameCtrl.text.isEmpty || _lastNameCtrl.text.isEmpty || _emailCtrl.text.isEmpty || _passwordCtrl.text.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lütfen zorunlu alanları doldurun!"), backgroundColor: Colors.red));
-                      return;
-                    }
+                    if (!_formKey.currentState!.validate()) return;
 
                     setDialogState(() => _isSubmitting = true);
 
@@ -361,7 +418,9 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                         _fetchWorkers();
                       } else {
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Hata: ${response.body}"), backgroundColor: Colors.red));
+                        final error = jsonDecode(response.body);
+                        final errorMessage = error['email'] ?? 'Bir hata oluştu.';
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Hata: $errorMessage"), backgroundColor: Colors.red));
                       }
                     } catch (e) {
                       debugPrint("Ekleme Hatası: $e");

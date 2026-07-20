@@ -13,17 +13,34 @@ class TaskService {
   Future<List<TaskModel>> getAllTasks() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String? token = prefs.getString('token');
+    final headers = {
+      "Content-Type": "application/json",
+      if (token != null) "Authorization": "Bearer $token"
+    };
 
     final response = await http.get(
       Uri.parse(baseUrl),
-      headers: {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"},
+      headers: headers,
     );
 
-    if (response.statusCode == 200) {
-      List<dynamic> body = jsonDecode(utf8.decode(response.bodyBytes));
-      return body.map((dynamic item) => TaskModel.fromJson(item)).toList();
+    final deletedResponse = await http.get(
+      Uri.parse("$baseUrl/deleted"),
+      headers: headers,
+    );
+
+    if (response.statusCode == 200 && deletedResponse.statusCode == 200) {
+      List<dynamic> activeBody = jsonDecode(utf8.decode(response.bodyBytes));
+      List<dynamic> deletedBody = jsonDecode(utf8.decode(deletedResponse.bodyBytes));
+
+      List<TaskModel> allTasks = activeBody.map((dynamic item) => TaskModel.fromJson(item)).toList();
+      List<TaskModel> deletedTasks = deletedBody.map((dynamic item) {
+        return TaskModel.fromJson(item).copyWith(status: 'CANCELLED');
+      }).toList();
+
+      allTasks.addAll(deletedTasks);
+      return allTasks;
     } else {
-      throw Exception('Görevler yüklenemedi.');
+      throw Exception('Görevler yüklenemedi. Sunucu hatası!');
     }
   }
 
@@ -143,5 +160,57 @@ class TaskService {
     } else {
       throw Exception('Geçmiş görevler yüklenemedi.');
     }
+  }
+
+  Future<bool> deleteTask(int taskId) async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString('token');
+
+      final response = await http.delete(
+        Uri.parse("$baseUrl/$taskId"),
+        headers: {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"},
+      );
+      return response.statusCode == 204;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<bool> addItemToTask(int taskId, int productId, int quantity) async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString('token');
+
+      final response = await http.post(
+        Uri.parse("$baseUrl/$taskId/items"),
+        headers: {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"},
+        body: jsonEncode({"productId": productId, "quantity": quantity}),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<List<TaskModel>> getDeletedTasks() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? token = prefs.getString('token');
+    final response = await http.get(Uri.parse("$baseUrl/deleted"), headers: {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"});
+    if (response.statusCode == 200) {
+      return (jsonDecode(utf8.decode(response.bodyBytes)) as List).map((dynamic item) => TaskModel.fromJson(item)).toList();
+    }
+    return [];
+  }
+
+  Future<List<TaskModel>> getDeletedTasksForWorker() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? token = prefs.getString('token');
+    int? workerId = prefs.getInt('workerId');
+    final response = await http.get(Uri.parse("$baseUrl/worker/$workerId/deleted"), headers: {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"});
+    if (response.statusCode == 200) {
+      return (jsonDecode(utf8.decode(response.bodyBytes)) as List).map((dynamic item) => TaskModel.fromJson(item)).toList();
+    }
+    return [];
   }
 }

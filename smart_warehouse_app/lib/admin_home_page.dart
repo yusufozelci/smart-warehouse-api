@@ -6,9 +6,11 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_warehouse_app/services/auth_service.dart';
 import 'package:smart_warehouse_app/login_page.dart';
+import 'package:smart_warehouse_app/services/task_service.dart';
 import 'package:smart_warehouse_app/services/websocket_service.dart';
 import 'package:smart_warehouse_app/global_utils.dart';
 import 'package:smart_warehouse_app/worker_management_page.dart';
+import 'cancelled_task_page.dart';
 import 'inventory_page.dart';
 import 'product_catalog_page.dart';
 import 'warehouse_map_page.dart';
@@ -30,6 +32,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
   int _totalProducts = 0;
   int _activeWorkers = 0;
   int _completedTasks = 0;
+  int _cancelledTasksCount = 0;
   int _errorLogs = 0;
   bool _isLoadingStats = true;
 
@@ -38,7 +41,8 @@ class _AdminHomePageState extends State<AdminHomePage> {
   @override
   void initState() {
     super.initState();
-     WebSocketService.instance.connect("ws://localhost:8080/ws-warehouse");
+    String wsUrl = baseUrl.replaceAll("http://", "ws://") + "/ws-warehouse";
+    WebSocketService.instance.connect(wsUrl);
     _fetchStats();
     _liveUpdates = List.from(WebSocketService.instance.messages);
     WebSocketService.instance.subscribe(_onTaskReceived);
@@ -55,7 +59,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
     if (mounted) {
       setState(() {
         _liveUpdates.insert(0, data);
-        _completedTasks++;
+        if(data['status'] == 'COMPLETED') _completedTasks++;
       });
       showGlobalNotification("Yeni İşlem: ${data['message'] ?? 'Ürün okutuldu'}");
     }
@@ -66,9 +70,9 @@ class _AdminHomePageState extends State<AdminHomePage> {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
       final headers = {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"};
-
       final response = await http.get(Uri.parse('$baseUrl/api/admin/stats'), headers: headers);
       final workerResponse = await http.get(Uri.parse('$baseUrl/api/v1/workers'), headers: headers);
+      final deletedTasks = await TaskService().getDeletedTasks();
 
       if (response.statusCode == 200 && workerResponse.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -78,6 +82,8 @@ class _AdminHomePageState extends State<AdminHomePage> {
           _totalProducts = data['totalProducts'] ?? 0;
           _activeWorkers = allWorkers.where((w) => w['role'] == 'WORKER').length;
           _completedTasks = data['completedTasks'] ?? 0;
+          _cancelledTasksCount = deletedTasks.length;
+
           _errorLogs = data['errorLogs'] ?? 0;
           _isLoadingStats = false;
         });
@@ -85,6 +91,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
         setState(() => _isLoadingStats = false);
       }
     } catch (e) {
+      debugPrint("İstatistikler yüklenirken hata: $e");
       setState(() => _isLoadingStats = false);
     }
   }
@@ -247,10 +254,13 @@ class _AdminHomePageState extends State<AdminHomePage> {
         children: [
 
           if (isDesktop)
-            Wrap(
-              spacing: 20,
-              runSpacing: 20,
-              children: _buildStatCards(),
+            Center(
+              child: Wrap(
+                spacing: 20,
+                runSpacing: 20,
+                alignment: WrapAlignment.center,
+                children: _buildStatCards(),
+              ),
             )
           else
             SingleChildScrollView(
@@ -313,6 +323,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
       _buildModernStatCard("Toplam Ürün", "$_totalProducts", Icons.inventory_2, Colors.orange, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductCatalogPage()))),
       _buildModernStatCard("Aktif Personel", "$_activeWorkers", Icons.people, Colors.blue, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WorkerManagementPage(initialFilter: "ACTIVE_ONLY")))),
       _buildModernStatCard("Tamamlanan", "$_completedTasks", Icons.check_circle, Colors.green, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CompletedTasksPage()))),
+      _buildModernStatCard("İptal Edilen", "$_cancelledTasksCount", Icons.cancel, Colors.red, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CancelledTasksPage()))),
       _buildModernStatCard("Hata Kaydı", "$_errorLogs", Icons.error, Colors.red, () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ErrorLogsPage()))),
     ];
   }
@@ -322,22 +333,22 @@ class _AdminHomePageState extends State<AdminHomePage> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        width: 260,
-        padding: const EdgeInsets.all(20),
+        width: 210,
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
-              child: Icon(icon, size: 28, color: color),
+              child: Icon(icon, size: 22, color: color),
             ),
             const SizedBox(width: 15),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: TextStyle(color: Colors.grey.shade600, fontSize: 13, fontWeight: FontWeight.w500)),
+                  Text(title, style: TextStyle(color: Colors.grey.shade600, fontSize: 11, fontWeight: FontWeight.w500)),
                   const SizedBox(height: 4),
                   Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87)),
                 ],

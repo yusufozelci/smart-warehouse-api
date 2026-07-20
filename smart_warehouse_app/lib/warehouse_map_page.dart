@@ -10,9 +10,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_warehouse_app/qr_scanner_page.dart';
 import 'package:smart_warehouse_app/services/task_service.dart';
 import 'package:smart_warehouse_app/global_utils.dart';
+import 'package:smart_warehouse_app/services/websocket_service.dart';
 import '../models/task_model.dart';
 import "services/route_services.dart";
 import '../painters/route_painter.dart';
+import 'package:stomp_dart_client/stomp_dart_client.dart';
 
 class WarehouseMapPage extends StatefulWidget {
   final bool isDashboard;
@@ -39,7 +41,6 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
   int _selectedFloor = 1;
   bool _isInitialFitDone = false;
   Map<String, dynamic>? _selectedShelf;
-
   TaskModel? _focusedTask;
 
   final TransformationController _transformationController = TransformationController();
@@ -62,10 +63,19 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     }
 
     _fetchAllData();
+    WebSocketService.instance.subscribe(_onTaskUpdate);
+  }
+
+  void _onTaskUpdate(Map<String, dynamic> data) {
+    if (mounted) {
+      debugPrint("🔄 Global WebSocket Tetikledi, Görevler Yenileniyor...");
+      _fetchAllData();
+    }
   }
 
   @override
   void dispose() {
+    WebSocketService.instance.unsubscribe(_onTaskUpdate);
     _transformationController.dispose();
     _animController?.dispose();
     super.dispose();
@@ -121,20 +131,9 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
       if (!widget.isWorkerMode) {
         final workerRes = await http.get(Uri.parse('$baseUrl/api/v1/workers'), headers: headers);
         final tasks = await TaskService().getAllTasks();
+
         if (workerRes.statusCode == 200) {
           _workers = jsonDecode(workerRes.body);
-          tasks.sort((a, b) {
-            int getStatusPriority(String status) {
-              if (status == 'IN_PROGRESS') return 1;
-              if (status == 'PENDING') return 2;
-              return 3;
-            }
-            int pA = getStatusPriority(a.status);
-            int pB = getStatusPriority(b.status);
-            if (pA != pB) return pA.compareTo(pB);
-            return b.id.compareTo(a.id);
-          });
-
           _tasks = tasks;
         }
       }
@@ -228,8 +227,46 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     _animController!.forward(from: 0);
   }
 
+  List<TaskModel> _getSortedTasks() {
+    List<TaskModel> sorted = List.from(_tasks);
+    sorted.sort((a, b) {
+      int getPriority(String status) {
+        if (status == 'IN_PROGRESS') return 0;
+        if (status == 'PENDING') return 1;
+        if (status == 'COMPLETED') return 2;
+        if (status == 'CANCELLED' || status == 'CANCELED') return 3;
+        return 4;
+      }
+      int pA = getPriority(a.status);
+      int pB = getPriority(b.status);
+      if (pA != pB) {
+        return pA.compareTo(pB);
+      }
+      DateTime dateA = a.updatedAt ?? a.createdAt ?? DateTime.now();
+      DateTime dateB = b.updatedAt ?? b.createdAt ?? DateTime.now();
+      return dateB.compareTo(dateA);
+    });
+    return sorted;
+  }
+
+  Color _getTaskStatusColor(String status) {
+    switch (status) {
+      case 'IN_PROGRESS':
+        return Colors.blue;
+      case 'PENDING':
+        return Colors.amber;
+      case 'COMPLETED':
+        return Colors.green;
+      case 'CANCELLED':
+      case 'CANCELED':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
   void _focusOnShelf(String code) {
-    if (widget.isDashboard || widget.isWorkerMode) return;
+    if (widget.isWorkerMode) return;
 
     final target = _shelves.firstWhere((s) => s['shelfCode'] == code && s['floor'] == _selectedFloor, orElse: () => null);
     if (target == null) return;
@@ -247,7 +284,6 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
       double targetY = (target['coordinateY'] ?? 0).toDouble();
       double centerX = targetX + 70;
       double centerY = targetY + 45;
-
       final targetMatrix = Matrix4.identity()
         ..translate(-centerX * 1.8 + (mapBox.size.width / 2), -centerY * 1.8 + (mapBox.size.height / 2))
         ..scale(1.8, 1.8, 1.0);
@@ -594,35 +630,186 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     );
   }
 
+  void _showAddProductToTaskDialog(TaskModel task) {
+   Map<String, dynamic>? selectedProduct;
+   TextEditingController qtyController = TextEditingController(text: "1");
+   TextEditingController? prodSearchController;
+
+   showDialog(
+     context: context,
+     builder: (context) {
+       return StatefulBuilder(
+         builder: (context, setStateSB) {
+           return AlertDialog(
+             title: Text("Görev #${task.id} - Ürün Ekle", style: const TextStyle(fontWeight: FontWeight.bold)),
+             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+             content: SizedBox(
+               width: 500,
+               child: Column(
+                 mainAxisSize: MainAxisSize.min,
+                 children: [
+                   Container(
+                     padding: const EdgeInsets.all(12),
+                     decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
+                     child: Row(
+                       children: [
+                         Expanded(
+                           flex: 3,
+                           child: Autocomplete<Map<String, dynamic>>(
+                             displayStringForOption: (option) => "${option['name']} (Stok: ${option['stockQuantity']})",
+                             optionsBuilder: (TextEditingValue textEditingValue) {
+                               if (textEditingValue.text.isEmpty) {
+                                 return _allProducts.cast<Map<String, dynamic>>();
+                               }
+                               return _allProducts.where((p) =>
+                               p['name'].toString().toLowerCase().contains(textEditingValue.text.toLowerCase()) ||
+                                   (p['sku'] != null && p['sku'].toString().toLowerCase().contains(textEditingValue.text.toLowerCase()))
+                               ).cast<Map<String, dynamic>>();
+                             },
+                             onSelected: (Map<String, dynamic> selection) {
+                               setStateSB(() => selectedProduct = selection);
+                             },
+                             fieldViewBuilder: (context, textController, focusNode, onFieldSubmitted) {
+                               prodSearchController = textController;
+                               return TextField(
+                                 controller: textController,
+                                 focusNode: focusNode,
+                                 decoration: InputDecoration(
+                                   labelText: "Ürün Ara",
+                                   prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
+                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                   isDense: true,
+                                 ),
+                                 onChanged: (val) {
+                                   if(val.isEmpty) setStateSB(() => selectedProduct = null);
+                                 },
+                               );
+                             },
+                           ),
+                         ),
+                         const SizedBox(width: 8),
+                         Expanded(
+                           flex: 1,
+                           child: TextField(
+                             controller: qtyController,
+                             keyboardType: TextInputType.number,
+                             decoration: const InputDecoration(labelText: "Adet", border: OutlineInputBorder(), isDense: true),
+                           ),
+                         ),
+                       ],
+                     ),
+                   ),
+                   if (selectedProduct != null) ...[
+                     const SizedBox(height: 16),
+                     Card(
+                       child: Padding(
+                         padding: const EdgeInsets.all(12.0),
+                         child: Column(
+                           crossAxisAlignment: CrossAxisAlignment.start,
+                           children: [
+                             Text("Seçilen Ürün: ${selectedProduct!['name']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                             Text("SKU: ${selectedProduct!['sku'] ?? 'N/A'}"),
+                             Text("Stok: ${selectedProduct!['stockQuantity']}"),
+                           ],
+                         ),
+                       ),
+                     )
+                   ]
+                 ],
+               ),
+             ),
+             actions: [
+               TextButton(
+                 onPressed: () => Navigator.pop(context),
+                 child: const Text("İptal"),
+               ),
+               ElevatedButton(
+                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                 onPressed: selectedProduct == null ? null : () async {
+                   int qty = int.tryParse(qtyController.text) ?? 1;
+                   bool success = await TaskService().addItemToTask(task.id, selectedProduct!['id'], qty);
+                    
+                   Navigator.pop(context);
+                    
+                   if (success) {
+                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ürün başarıyla eklendi!"), backgroundColor: Colors.green));
+                     _fetchAllData();
+                   } else {
+                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ürün eklenemedi!"), backgroundColor: Colors.red));
+                   }
+                 },
+                 child: const Text("Ürün Ekle", style: TextStyle(color: Colors.white)),
+               ),
+             ],
+           );
+         },
+       );
+     },
+   );
+  }
+
+  void _showDeleteTaskDialog(TaskModel task) {
+   showDialog(
+     context: context,
+     builder: (context) {
+       return AlertDialog(
+         title: const Text("Görevi Sil", style: TextStyle(fontWeight: FontWeight.bold)),
+         content: Text("Görev #${task.id} silinecek. Emin misiniz? (Sadece başlanmamış görevler silinebilir)"),
+         actions: [
+           TextButton(
+             onPressed: () => Navigator.pop(context),
+             child: const Text("İptal"),
+           ),
+           ElevatedButton(
+             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+             onPressed: () async {
+               bool success = await TaskService().deleteTask(task.id);
+               Navigator.pop(context);
+                 
+               if (success) {
+                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Görev silindi!"), backgroundColor: Colors.green));
+                 _fetchAllData();
+               } else {
+                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Görev silinemedi!"), backgroundColor: Colors.red));
+               }
+             },
+             child: const Text("Sil", style: TextStyle(color: Colors.white)),
+           )
+         ],
+       );
+     },
+   );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            LayoutBuilder(
-                builder: (context, constraints) {
-                  bool isMobile = constraints.maxWidth < 800;
+   return Scaffold(
+     backgroundColor: Colors.white,
+     body: SafeArea(
+       child: Stack(
+         children: [
+           LayoutBuilder(
+               builder: (context, constraints) {
+                 bool isMobile = constraints.maxWidth < 800;
 
-                  if (isMobile) {
-                    if (_isLoading) return const Center(child: CircularProgressIndicator());
-                    final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
-                    int totalShelves = currentFloorShelves.length;
-                    int occupiedShelves = currentFloorShelves.where((s) {
-                      return _allProducts.any((p) => p['shelfCode'] == s['shelfCode'] && (p['stockQuantity'] ?? 0) > 0);
-                    }).length;
-                    int emptyShelves = totalShelves - occupiedShelves;
+                 if (isMobile) {
+                   if (_isLoading) return const Center(child: CircularProgressIndicator());
+                   final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
+                   int totalShelves = currentFloorShelves.length;
+                   int occupiedShelves = currentFloorShelves.where((s) {
+                     return _allProducts.any((p) => p['shelfCode'] == s['shelfCode'] && (p['stockQuantity'] ?? 0) > 0);
+                   }).length;
+                   int emptyShelves = totalShelves - occupiedShelves;
 
-                    if (widget.isWorkerMode) {
-                      return Column(
-                        children: [
-                          Expanded(
-                            flex: 5,
-                            child: Container(
-                              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 2))),
-                              child: _buildMapViewer(currentFloorShelves, isMobile: true),
-                            ),
+                   if (widget.isWorkerMode) {
+                     return Column(
+                       children: [
+                         Expanded(
+                           flex: 5,
+                           child: Container(
+                             decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 2))),
+                             child: _buildMapViewer(currentFloorShelves, isMobile: true),
+                           ),
                           ),
                           Expanded(
                             flex: 4,
@@ -1067,28 +1254,69 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                   ? Center(child: Text("Sistemde henüz görev bulunmuyor.", style: TextStyle(color: Colors.grey.shade500)))
                   : ListView.builder(
                 padding: const EdgeInsets.all(16),
-                itemCount: _tasks.length,
+                itemCount: _getSortedTasks().length,
                 itemBuilder: (context, index) {
-                  final task = _tasks[index];
+                  final task = _getSortedTasks()[index];
+
                   bool isCompleted = task.status == 'COMPLETED';
+                  bool isPending = task.status == 'PENDING';
+                  bool isInProgress = task.status == 'IN_PROGRESS';
+                  bool isCancelled = task.status == 'CANCELLED' || task.status == 'CANCELED';
+
                   bool isUnassigned = task.assignedWorkerName == 'Atanmamış' || task.assignedWorkerName.isEmpty;
                   bool isFocused = _focusedTask?.id == task.id;
+                  Color statusColor = _getTaskStatusColor(task.status);
+
+                  IconData getStatusIcon() {
+                    if (isCompleted) return Icons.check_circle;
+                    if (isCancelled) return Icons.cancel;
+                    if (isInProgress) return Icons.hourglass_bottom;
+                    if (isPending) return Icons.schedule;
+                    return Icons.help_outline;
+                  }
+
+                  String getStatusText() {
+                    if (isCompleted) return "Tamamlandı";
+                    if (isCancelled) return "İptal Edildi";
+                    if (isInProgress) return "İşlemde";
+                    if (isPending) return "Başlanmamış";
+                    return task.status;
+                  }
 
                   if (widget.isDashboard) {
                     return Card(
                       elevation: 0,
                       color: Colors.white,
                       margin: const EdgeInsets.only(bottom: 8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: Colors.grey.shade200)),
-                      child: ListTile(
-                        dense: true,
-                        leading: Icon(
-                            isCompleted ? Icons.check_circle : (isUnassigned ? Icons.person_off : Icons.pending_actions),
-                            color: isCompleted ? Colors.green : (isUnassigned ? Colors.red : Colors.orange),
-                            size: 20
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: statusColor.withOpacity(0.3), width: 2)),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border(left: BorderSide(color: statusColor, width: 4)),
                         ),
-                        title: Text("Görev ID: #${task.id}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
-                        subtitle: Text(isUnassigned ? "Personel Bekliyor" : "Atanan: ${task.assignedWorkerName}", style: TextStyle(color: isUnassigned ? Colors.red : Colors.grey.shade600, fontSize: 12)),
+                        child: ListTile(
+                          dense: true,
+                          leading: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.15),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(getStatusIcon(), color: statusColor, size: 20),
+                          ),
+                          title: Text("Görev #${task.id}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87)),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(isUnassigned ? "Personel Bekliyor" : "Atanan: ${task.assignedWorkerName}",
+                                  style: TextStyle(color: isUnassigned ? Colors.red : Colors.grey.shade600, fontSize: 12)),
+                              Text(getStatusText(),
+                                  style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          trailing: const Icon(Icons.info_outline, size: 16, color: Colors.grey),
+                        ),
                       ),
                     );
                   }
@@ -1098,42 +1326,78 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                     margin: const EdgeInsets.only(bottom: 12),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: isFocused ? const Color(0xFF6200EA) : Colors.transparent, width: 2)
+                        side: BorderSide(color: isFocused ? statusColor : Colors.transparent, width: 2)
                     ),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                      leading: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                            color: isCompleted ? Colors.green.shade50 : (isUnassigned ? Colors.red.shade50 : Colors.orange.shade50),
-                            shape: BoxShape.circle
-                        ),
-                        child: Icon(
-                            isCompleted ? Icons.check_circle : (isUnassigned ? Icons.person_off : Icons.pending_actions),
-                            color: isCompleted ? Colors.green : (isUnassigned ? Colors.red : Colors.orange),
-                            size: 28
-                        ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border(left: BorderSide(color: statusColor, width: 5)),
                       ),
-                      title: Text("Görev ID: #${task.id}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isFocused ? const Color(0xFF6200EA) : Colors.black87)),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 6.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(isUnassigned ? "Personel Bekliyor" : "Atanan: ${task.assignedWorkerName}", style: TextStyle(color: isUnassigned ? Colors.red : Colors.grey.shade700, fontWeight: isUnassigned ? FontWeight.bold : FontWeight.w500)),
-                            const SizedBox(height: 4),
-                            Text("Toplam ${task.items.length} Kalem Ürün", style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        leading: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.15),
+                              shape: BoxShape.circle
+                          ),
+                          child: Icon(getStatusIcon(), color: statusColor, size: 28),
+                        ),
+                        title: Text("Görev ID: #${task.id}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isFocused ? statusColor : Colors.black87)),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 6.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(isUnassigned ? "Personel Bekliyor" : "Atanan: ${task.assignedWorkerName}", style: TextStyle(color: isUnassigned ? Colors.red : Colors.grey.shade700, fontWeight: isUnassigned ? FontWeight.bold : FontWeight.w500)),
+                              const SizedBox(height: 4),
+                              Text("Toplam ${task.items.length} Kalem Ürün", style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
+                              const SizedBox(height: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: statusColor.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  getStatusText(),
+                                  style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.bold),
+                                ),
+                              )
+                            ],
+                          ),
+                        ),
+                        trailing: isUnassigned && !isCancelled
+                            ? PopupMenuButton(
+                          itemBuilder: (context) => [
+                            PopupMenuItem(
+                              child: const Text("Personel Ata"),
+                              onTap: () => _showAssignWorkerDialog(task),
+                            ),
+                            PopupMenuItem(
+                              child: const Text("Sil"),
+                              onTap: () => _showDeleteTaskDialog(task),
+                            ),
                           ],
+                        )
+                            : ((!isCompleted && !isCancelled)
+                            ? PopupMenuButton(
+                          itemBuilder: (context) => [
+                            PopupMenuItem(
+                              child: const Text("Ürün Ekle"),
+                              onTap: () => _showAddProductToTaskDialog(task),
+                            ),
+                            if (isPending)
+                              PopupMenuItem(
+                                child: const Text("Sil"),
+                                onTap: () => _showDeleteTaskDialog(task),
+                              ),
+                          ],
+                        )
+                            : const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey)
                         ),
+                        onTap: () => _focusOnTask(task),
                       ),
-                      trailing: isUnassigned
-                          ? ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                        onPressed: () => _showAssignWorkerDialog(task),
-                        child: const Text("Ata", style: TextStyle(color: Colors.white)),
-                      )
-                          : const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
-                      onTap: () => _focusOnTask(task),
                     ),
                   );
                 },
@@ -1492,7 +1756,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                     style: const TextStyle(fontSize: 13),
                     textAlignVertical: TextAlignVertical.center,
                     decoration: const InputDecoration(
-                      hintText: "Rafta Ara...",
+                      hintText: "Raf Ara",
                       prefixIcon: Icon(Icons.search, size: 18, color: Colors.grey),
                       border: InputBorder.none,
                       isCollapsed: true,

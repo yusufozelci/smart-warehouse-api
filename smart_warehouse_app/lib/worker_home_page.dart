@@ -9,6 +9,7 @@ import 'package:smart_warehouse_app/services/task_service.dart';
 import 'package:smart_warehouse_app/models/task_model.dart';
 import 'package:smart_warehouse_app/login_page.dart';
 import 'package:smart_warehouse_app/warehouse_map_page.dart';
+import 'package:smart_warehouse_app/services/websocket_service.dart';
 
 class WorkerHomePage extends StatefulWidget {
   const WorkerHomePage({super.key});
@@ -20,6 +21,19 @@ class WorkerHomePage extends StatefulWidget {
 class _WorkerHomePageState extends State<WorkerHomePage> {
   int _currentIndex = 0;
   final Color primaryColor = const Color(0xFF1A237E);
+
+  String get baseUrl {
+    if (kIsWeb) return "http://localhost:8080";
+    if (Platform.isAndroid) return "http://10.0.2.2:8080";
+    return "http://localhost:8080";
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    String wsUrl = baseUrl.replaceAll("http://", "ws://") + "/ws-warehouse";
+    WebSocketService.instance.connect(wsUrl);
+  }
 
   void _onTabTapped(int index) {
     setState(() {
@@ -33,18 +47,22 @@ class _WorkerHomePageState extends State<WorkerHomePage> {
       backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
         title: Text(
-          ["Aktif Depo Görevleri", "Görev Geçmişi", "Personel Profili"][_currentIndex],
+          ["Aktif Depo Görevleri", "Görev Geçmişi", "İptal Edilenler", "Personel Profili"][_currentIndex],
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         backgroundColor: primaryColor,
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
       ),
-      body: [
-        const _ActiveTasksTab(),
-        const _CompletedTasksTab(),
-        const _ProfileTab(),
-      ][_currentIndex],
+      body: IndexedStack(
+        index: _currentIndex,
+        children: const [
+          _ActiveTasksTab(),
+          _CompletedTasksTab(),
+          _DeletedTasksTab(),
+          _ProfileTab(),
+        ],
+      ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, -3))],
@@ -60,6 +78,7 @@ class _WorkerHomePageState extends State<WorkerHomePage> {
           items: const [
             BottomNavigationBarItem(icon: Icon(Icons.assignment), label: 'Aktif'),
             BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Geçmiş'),
+            BottomNavigationBarItem(icon: Icon(Icons.delete_sweep), label: 'İptaller'),
             BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profil'),
           ],
         ),
@@ -89,6 +108,20 @@ class _ActiveTasksTabState extends State<_ActiveTasksTab> {
   void initState() {
     super.initState();
     _refreshTasks();
+    WebSocketService.instance.subscribe(_onTaskUpdate);
+  }
+
+  @override
+  void dispose() {
+    WebSocketService.instance.unsubscribe(_onTaskUpdate);
+    super.dispose();
+  }
+
+  void _onTaskUpdate(Map<String, dynamic> data) {
+    if (mounted) {
+      debugPrint("🔄 Global WebSocket Tetikledi: Aktif Görevler Yenileniyor...");
+      _refreshTasks();
+    }
   }
 
   void _refreshTasks() {
@@ -271,7 +304,7 @@ class _ActiveTasksTabState extends State<_ActiveTasksTab> {
   }
 
   void _showTaskDetails(BuildContext context, TaskModel task) async {
-    final result = await Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => WarehouseMapPage(
@@ -284,24 +317,52 @@ class _ActiveTasksTabState extends State<_ActiveTasksTab> {
   }
 }
 
-class _CompletedTasksTab extends StatelessWidget {
+class _CompletedTasksTab extends StatefulWidget {
   const _CompletedTasksTab();
+
+  @override
+  State<_CompletedTasksTab> createState() => _CompletedTasksTabState();
+}
+
+class _CompletedTasksTabState extends State<_CompletedTasksTab> {
+  late Future<List<TaskModel>> _completedTasksFuture;
   final Color primaryColor = const Color(0xFF1A237E);
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshTasks();
+    WebSocketService.instance.subscribe(_onTaskUpdate);
+  }
+
+  @override
+  void dispose() {
+    WebSocketService.instance.unsubscribe(_onTaskUpdate);
+    super.dispose();
+  }
+
+  void _onTaskUpdate(Map<String, dynamic> data) {
+    if (mounted) _refreshTasks();
+  }
+
+  void _refreshTasks() {
+    setState(() {
+      _completedTasksFuture = TaskService().getCompletedTasksForWorker();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<TaskModel>>(
-      future: TaskService().getCompletedTasksForWorker(),
+      future: _completedTasksFuture,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return Center(child: CircularProgressIndicator(color: primaryColor));
+        if (snapshot.connectionState == ConnectionState.waiting) return Center(child: CircularProgressIndicator(color: primaryColor));
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return Center(child: Text("Henüz tamamlanmış görev yok.", style: TextStyle(fontSize: 16, color: Colors.grey.shade600)));
+        }
+
         final tasks = snapshot.data!;
         tasks.sort((a, b) => b.id.compareTo(a.id));
-
-        if (tasks.isEmpty) {
-          return Center(
-            child: Text("Henüz tamamlanmış görev yok.", style: TextStyle(fontSize: 16, color: Colors.grey.shade600)),
-          );
-        }
 
         return ListView.builder(
           padding: const EdgeInsets.all(12),
@@ -402,6 +463,82 @@ class _CompletedTasksTab extends StatelessWidget {
         const SizedBox(width: 4),
         Text(text, style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
       ],
+    );
+  }
+}
+
+class _DeletedTasksTab extends StatefulWidget {
+  const _DeletedTasksTab();
+
+  @override
+  State<_DeletedTasksTab> createState() => _DeletedTasksTabState();
+}
+
+class _DeletedTasksTabState extends State<_DeletedTasksTab> {
+  late Future<List<TaskModel>> _deletedTasksFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshTasks();
+    WebSocketService.instance.subscribe(_onTaskUpdate);
+  }
+
+  @override
+  void dispose() {
+    WebSocketService.instance.unsubscribe(_onTaskUpdate);
+    super.dispose();
+  }
+
+  void _onTaskUpdate(Map<String, dynamic> data) {
+    if (mounted) _refreshTasks();
+  }
+
+  void _refreshTasks() {
+    setState(() {
+      _deletedTasksFuture = TaskService().getDeletedTasksForWorker();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<TaskModel>>(
+      future: _deletedTasksFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: Colors.red));
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.delete_outline, size: 80, color: Colors.grey.shade400),
+                  const SizedBox(height: 16),
+                  Text("İptal edilen görev yok.", style: TextStyle(fontSize: 18, color: Colors.grey.shade600)),
+                ],
+              )
+          );
+        }
+
+        final tasks = snapshot.data!;
+        return ListView.builder(
+          padding: const EdgeInsets.all(12),
+          itemCount: tasks.length,
+          itemBuilder: (context, index) {
+            final task = tasks[index];
+            return Card(
+              elevation: 1,
+              color: Colors.red.shade50,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15), side: BorderSide(color: Colors.red.shade200)),
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                leading: const Icon(Icons.cancel, color: Colors.red, size: 28),
+                title: Text("Görev ID: #${task.id} (İptal Edildi)", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                subtitle: Text("Toplam ${task.items.length} ürün iptal oldu.", style: TextStyle(color: Colors.red.shade400)),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

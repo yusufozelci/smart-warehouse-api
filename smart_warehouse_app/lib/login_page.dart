@@ -15,17 +15,23 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _userCtrl = TextEditingController();
   final TextEditingController _passCtrl = TextEditingController();
   final AuthService _auth = AuthService();
 
   bool _isLoading = false;
+  bool _obscureText = true;
 
   String get baseUrl => kIsWeb
       ? "http://localhost:8080"
       : (Platform.isAndroid ? "http://10.0.2.2:8080" : "http://localhost:8080");
 
   Future<void> _handleLogin() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     bool success = await _auth.login(_userCtrl.text, _passCtrl.text);
@@ -76,69 +82,98 @@ class _LoginPageState extends State<LoginPage> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                 child: Padding(
                   padding: const EdgeInsets.all(32.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(color: Colors.blue.shade50, shape: BoxShape.circle),
-                        child: const Icon(Icons.warehouse_rounded, size: 60, color: Color(0xFF1A237E)),
-                      ),
-                      const SizedBox(height: 24),
-                      const Text("Akıllı Depo", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1A237E))),
-                      const SizedBox(height: 32),
-
-                      TextField(
-                        controller: _userCtrl,
-                        decoration: InputDecoration(
-                            labelText: "Kullanıcı Adı",
-                            prefixIcon: const Icon(Icons.person_outline),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(color: Colors.blue.shade50, shape: BoxShape.circle),
+                          child: const Icon(Icons.warehouse_rounded, size: 60, color: Color(0xFF1A237E)),
                         ),
-                      ),
-                      const SizedBox(height: 16),
+                        const SizedBox(height: 24),
+                        const Text("Akıllı Depo", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1A237E))),
+                        const SizedBox(height: 32),
 
-                      TextField(
-                        controller: _passCtrl,
-                        obscureText: true,
-                        decoration: InputDecoration(
-                            labelText: "Şifre",
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => ForgotPasswordPage(baseUrl: baseUrl)),
-                            );
-                          },
-                          child: const Text("Şifremi unuttum?", style: TextStyle(color: Color(0xFF6200EA), fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF1A237E),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                        TextFormField(
+                          controller: _userCtrl,
+                          decoration: InputDecoration(
+                              labelText: "E-posta Adresi",
+                              prefixIcon: const Icon(Icons.person_outline),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))
                           ),
-                          onPressed: _isLoading ? null : _handleLogin,
-                          child: _isLoading
-                              ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                              : const Text("Giriş Yap", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Lütfen e-posta adresinizi girin.';
+                            }
+                            if (!RegExp(r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+").hasMatch(value)) {
+                              return 'Lütfen geçerli bir e-posta adresi girin.';
+                            }
+                            return null;
+                          },
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 16),
+
+                        TextFormField(
+                          controller: _passCtrl,
+                          obscureText: _obscureText,
+                          decoration: InputDecoration(
+                              labelText: "Şifre",
+                              prefixIcon: const Icon(Icons.lock_outline),
+                              suffixIcon: IconButton(
+                                icon: Icon(_obscureText ? Icons.visibility_off : Icons.visibility),
+                                onPressed: () {
+                                  setState(() {
+                                    _obscureText = !_obscureText;
+                                  });
+                                },
+                              ),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Lütfen şifrenizi girin.';
+                            }
+                            if (value.length < 8) {
+                              return 'Şifre en az 8 karakter olmalıdır.';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => ForgotPasswordPage(baseUrl: baseUrl)),
+                              );
+                            },
+                            child: const Text("Şifremi unuttum?", style: TextStyle(color: Color(0xFF6200EA), fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF1A237E),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                            ),
+                            onPressed: _isLoading ? null : _handleLogin,
+                            child: _isLoading
+                                ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                : const Text("Giriş Yap", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
