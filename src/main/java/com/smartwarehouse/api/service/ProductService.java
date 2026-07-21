@@ -4,16 +4,19 @@ import com.smartwarehouse.api.dto.ProductRequestDto;
 import com.smartwarehouse.api.dto.ProductResponseDto;
 import com.smartwarehouse.api.entity.Product;
 import com.smartwarehouse.api.entity.Shelf;
+import com.smartwarehouse.api.entity.StockMovementType;
 import com.smartwarehouse.api.mapper.ProductMapper;
 import com.smartwarehouse.api.repository.ProductRepository;
 import com.smartwarehouse.api.repository.ShelfRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.Hibernate;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -23,6 +26,8 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final ShelfRepository shelfRepository;
     private final ProductMapper productMapper;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final StockMovementService stockMovementService;
 
     @Transactional
     public ProductResponseDto addProduct(ProductRequestDto request) {
@@ -43,6 +48,8 @@ public class ProductService {
         Product savedProduct = productRepository.save(product);
         log.info("Ürün başarıyla eklendi. SKU: {}", savedProduct.getSku());
 
+        stockMovementService.record(savedProduct, savedProduct.getStockQuantity(), StockMovementType.IN, "PRODUCT_CREATED");
+        publishStatisticsUpdate("PRODUCT_CREATED", savedProduct.getId());
         return productMapper.toResponseDto(savedProduct);
     }
 
@@ -67,13 +74,17 @@ public class ProductService {
         product.setStockQuantity(product.getStockQuantity() - amount);
         log.info("Stok başarıyla düşürüldü. Ürün ID: {}, Kalan Stok: {}", id, product.getStockQuantity());
 
-        return productMapper.toResponseDto(productRepository.save(product));
+        ProductResponseDto response = productMapper.toResponseDto(productRepository.save(product));
+        stockMovementService.record(product, amount, StockMovementType.OUT, "STOCK_DECREASED");
+        publishStatisticsUpdate("STOCK_CHANGED", id);
+        return response;
     }
 
     @Transactional
     public void deleteProduct(Long id) {
         try {
             productRepository.deleteById(id);
+            publishStatisticsUpdate("PRODUCT_DELETED", id);
             log.info("Ürün başarıyla silindi. ID: {}", id);
         } catch (Exception e) {
             log.error("Ürün silinirken hata oluştu! ID: {}", id, e);
@@ -109,7 +120,9 @@ public class ProductService {
         }
 
         log.info("Ürün başarıyla güncellendi. ID: {}", id);
-        return productMapper.toResponseDto(productRepository.save(product));
+        ProductResponseDto response = productMapper.toResponseDto(productRepository.save(product));
+        publishStatisticsUpdate("PRODUCT_UPDATED", id);
+        return response;
     }
 
     @Transactional
@@ -128,6 +141,16 @@ public class ProductService {
         }
 
         log.info("Stok başarıyla artırıldı. Ürün ID: {}, Yeni Stok: {}", id, savedProduct.getStockQuantity());
+        stockMovementService.record(savedProduct, amount, StockMovementType.IN, "STOCK_INCREASED");
+        publishStatisticsUpdate("STOCK_CHANGED", id);
         return savedProduct;
+    }
+
+    private void publishStatisticsUpdate(String type, Long productId) {
+        messagingTemplate.convertAndSend("/topic/manager/tasks", Map.of(
+                "type", type,
+                "productId", productId,
+                "message", type
+        ));
     }
 }
