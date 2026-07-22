@@ -33,9 +33,11 @@ public class PickTaskService {
     private final PickTaskMapper pickTaskMapper;
     private final TaskSortingService taskSortingService;
     private final ProductService productService;
+    private final StockMovementService stockMovementService;
 
     @Transactional
     public PickTaskResponseDto createPickTask(PickTaskRequestDto request) {
+
         log.info("Yeni görev oluşturuluyor...");
         PickTask task = new PickTask();
         task.setStatus(TaskStatus.PENDING);
@@ -66,6 +68,12 @@ public class PickTaskService {
         }
 
         PickTask savedTask = pickTaskRepository.save(task);
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "TASK_CREATED");
+        payload.put("message", "Yeni Görev Oluşturuldu: #" + savedTask.getId());
+        payload.put("taskId", savedTask.getId());
+        messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
         log.info("Görev başarıyla oluşturuldu. Görev Kodu: {}", savedTask.getTaskCode());
         return pickTaskMapper.toResponseDto(savedTask);
     }
@@ -157,7 +165,10 @@ public class PickTaskService {
         task.setStatus(TaskStatus.COMPLETED);
 
         for (PickTaskItem item : task.getItems()) {
-            item.setPicked(true);
+            if (!item.isPicked()) {
+                item.setPicked(true);
+                productService.decreaseStock(item.getProduct().getId(), item.getQuantity());
+            }
         }
 
         PickTask savedTask = pickTaskRepository.save(task);
@@ -168,7 +179,7 @@ public class PickTaskService {
         payload.put("workerId", savedTask.getAssignedWorker() != null ? savedTask.getAssignedWorker().getId() : "Bilinmiyor");
         messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
 
-        log.info("Görev başarıyla tamamlandı ve WebSocket üzerinden bildirildi. Görev Kodu: {}", savedTask.getTaskCode());
+        log.info("Görev başarıyla tamamlandı ve stoklar düşüldü. Görev Kodu: {}", savedTask.getTaskCode());
 
         return pickTaskMapper.toResponseDto(savedTask);
     }
@@ -286,5 +297,94 @@ public class PickTaskService {
     @Transactional(readOnly = true)
     public List<PickTask> getDeletedTasksForWorker(Worker worker) {
         return pickTaskRepository.findByAssignedWorkerAndIsDeletedTrueOrderByUpdatedAtDesc(worker);
+    }
+    @Transactional
+    public void deleteTask(Long id, String reason, String cancelledBy) {
+        PickTask task = pickTaskRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı!"));
+
+        if (task.getStatus() == TaskStatus.COMPLETED) {
+            throw new RuntimeException("Tamamlanmış görev silinemez/iptal edilemez!");
+        }
+
+        for (PickTaskItem item : task.getItems()) {
+            if (item.isPicked()) {
+                productService.increaseStock(item.getProduct().getId(), item.getQuantity());
+                item.setPicked(false);
+            }
+        }
+
+        task.setStatus(TaskStatus.CANCELLED);
+        task.setCancelReason(reason);
+        task.setCancelledBy(cancelledBy);
+        task.setIsDeleted(true);
+
+        pickTaskRepository.save(task);
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "TASK_DELETED");
+        payload.put("message", "Görev iptal edilerek silindi.");
+        payload.put("taskId", id);
+        messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
+
+        log.info("Görev silindi/iptal edildi. Stoklar iade edildi. Kodu: {}", task.getTaskCode());
+    }
+    @Transactional
+    public PickTaskResponseDto removeItemFromTask(Long taskId, Long productId, String reason, String cancelledBy) {
+        PickTask task = pickTaskRepository.findById(taskId)
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı!"));
+
+        if (task.getStatus() == TaskStatus.COMPLETED) {
+            throw new RuntimeException("Tamamlanmış görevden ürün çıkarılamaz!");
+        }
+
+        PickTaskItem itemToRemove = task.getItems().stream()
+                .filter(item -> item.getProduct().getId().equals(productId))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Görevde bu ürün bulunamadı!"));
+        if (itemToRemove.isPicked()) {
+            productService.increaseStock(productId, itemToRemove.getQuantity());
+            itemToRemove.setPicked(false);
+        }
+
+        if (task.getItems().size() == 1) {
+            task.setStatus(TaskStatus.CANCELLED);
+            task.setCancelReason("Görevdeki son ürün çıkarıldığı için görev iptal edildi. (Neden: " + reason + ")");
+            task.setCancelledBy(cancelledBy);
+            PickTask savedTask = pickTaskRepository.save(task);
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("type", "TASK_DELETED");
+            payload.put("message", "Görev tamamen iptal edildi.");
+            payload.put("taskId", taskId);
+            messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
+
+            return pickTaskMapper.toResponseDto(savedTask);
+        }
+
+        task.removeItem(itemToRemove);
+
+        PickTask cancelledRecord = new PickTask();
+        cancelledRecord.setTaskCode(task.getTaskCode() + "-REMOVED");
+        cancelledRecord.setStatus(TaskStatus.CANCELLED);
+        cancelledRecord.setCancelReason("[URUN_CIKARILDI-" + taskId + "] " + reason);
+        cancelledRecord.setCancelledBy(cancelledBy);
+
+        PickTaskItem cancelledItem = new PickTaskItem();
+        cancelledItem.setProduct(itemToRemove.getProduct());
+        cancelledItem.setQuantity(itemToRemove.getQuantity());
+        cancelledItem.setPicked(false);
+        cancelledRecord.addItem(cancelledItem);
+
+        pickTaskRepository.save(cancelledRecord);
+        PickTask savedTask = pickTaskRepository.save(task);
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "TASK_DELETED");
+        payload.put("message", "Görevden ürün çıkarıldı, iptal listesine eklendi.");
+        payload.put("taskId", taskId);
+        messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
+
+        return pickTaskMapper.toResponseDto(savedTask);
     }
 }

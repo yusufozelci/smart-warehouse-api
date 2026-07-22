@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/task_model.dart';
@@ -33,12 +33,15 @@ class TaskService {
       List<dynamic> deletedBody = jsonDecode(utf8.decode(deletedResponse.bodyBytes));
 
       List<TaskModel> allTasks = activeBody.map((dynamic item) => TaskModel.fromJson(item)).toList();
+
       List<TaskModel> deletedTasks = deletedBody.map((dynamic item) {
         return TaskModel.fromJson(item).copyWith(status: 'CANCELLED');
       }).toList();
-
       allTasks.addAll(deletedTasks);
-      return allTasks;
+      final uniqueTasks = {for (var task in allTasks) task.id: task}.values.toList();
+
+      return uniqueTasks;
+
     } else {
       throw Exception('Görevler yüklenemedi. Sunucu hatası!');
     }
@@ -162,17 +165,42 @@ class TaskService {
     }
   }
 
-  Future<bool> deleteTask(int taskId) async {
+  Future<bool> deleteTask(int taskId, {required String reason, required String cancelledBy}) async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      String? token = prefs.getString('token');
+      final uri = Uri.parse("$baseUrl/$taskId").replace(queryParameters: {
+        'reason': reason,
+        'cancelledBy': cancelledBy,
+      });
+
+      final response = await http.delete(
+        uri,
+        headers: {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"},
+      );
+      return response.statusCode == 204 || response.statusCode == 200;
+    } catch (e) {
+      debugPrint("Görev iptal hatası: $e");
+      return false;
+    }
+  }
+  Future<bool> removeItemFromTask(int taskId, int productId, {required String reason, required String cancelledBy}) async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? token = prefs.getString('token');
 
+      final uri = Uri.parse("$baseUrl/$taskId/items/$productId").replace(queryParameters: {
+        'reason': reason,
+        'cancelledBy': cancelledBy,
+      });
+
       final response = await http.delete(
-        Uri.parse("$baseUrl/$taskId"),
+        uri,
         headers: {"Content-Type": "application/json", if (token != null) "Authorization": "Bearer $token"},
       );
-      return response.statusCode == 204;
+      return response.statusCode == 200;
     } catch (e) {
+      debugPrint("Ürün çıkarma hatası: $e");
       return false;
     }
   }

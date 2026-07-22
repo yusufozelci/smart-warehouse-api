@@ -36,4 +36,10 @@ public class PickTask extends BaseEntity {
         items.remove(item);
         item.setPickTask(null);
     }
+
+    @Column(name = "cancel_reason", length = 500)
+    private String cancelReason;
+
+    @Column(name = "cancelled_by")
+    private String cancelledBy;
 }

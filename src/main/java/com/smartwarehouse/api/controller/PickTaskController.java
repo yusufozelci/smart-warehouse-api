@@ -111,22 +111,23 @@ public class    PickTaskController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteTask(@PathVariable Long id) {
-        PickTask task = pickTaskRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Görev bulunamadı!"));
-
-        if (task.getStatus() != TaskStatus.PENDING) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        task.setIsDeleted(true);
-        pickTaskRepository.save(task);
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("type", "TASK_DELETED");
-        payload.put("message", "Bir görev silindi.");
-        payload.put("taskId", id);
-        messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
+    public ResponseEntity<Void> deleteTask(
+            @PathVariable Long id,
+            @RequestParam String reason,
+            @RequestParam String cancelledBy){
+        pickTaskService.deleteTask(id, reason, cancelledBy);
         return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{taskId}/items/{productId}")
+    public ResponseEntity<PickTaskResponseDto> removeItemFromTask(
+            @PathVariable Long taskId,
+            @PathVariable Long productId,
+            @RequestParam String reason,
+            @RequestParam String cancelledBy) {
+
+        PickTaskResponseDto updatedTask = pickTaskService.removeItemFromTask(taskId, productId, reason, cancelledBy);
+        return ResponseEntity.ok(updatedTask);
     }
 
     @PostMapping("/{taskId}/items")

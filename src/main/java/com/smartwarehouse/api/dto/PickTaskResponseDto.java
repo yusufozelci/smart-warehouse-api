@@ -13,5 +13,8 @@ public class PickTaskResponseDto {
     private List<PickTaskItemResponseDto> items;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private String cancelReason;
+    private String cancelledBy;
+    private String completionDuration;
 
 }

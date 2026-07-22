@@ -12,5 +12,7 @@ public class PickTaskItemResponseDto {
     private String shelfCode;
     private boolean isPicked;
     private int stockQuantity;
+    private java.time.LocalDateTime createdAt;
+    private java.time.LocalDateTime updatedAt;
 
 }

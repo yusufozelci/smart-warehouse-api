@@ -16,6 +16,8 @@ public class PickTaskItemMapper {
         dto.setId(item.getId());
         dto.setQuantity(item.getQuantity());
         dto.setPicked(item.isPicked());
+        dto.setCreatedAt(item.getCreatedAt());
+        dto.setUpdatedAt(item.getUpdatedAt());
 
         if (item.getProduct() != null) {
             dto.setProductId(item.getProduct().getId());

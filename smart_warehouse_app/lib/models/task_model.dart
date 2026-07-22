@@ -5,6 +5,9 @@ class TaskModel {
   final List<dynamic> items;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+  final String? cancelReason;
+  final String? cancelledBy;
+  final String? completionDuration;
 
   TaskModel({
     required this.id,
@@ -13,9 +16,15 @@ class TaskModel {
     required this.items,
     this.createdAt,
     this.updatedAt,
+    this.cancelReason,
+    this.cancelledBy,
+    this.completionDuration,
   });
+
   TaskModel copyWith({
     String? status,
+    String? cancelReason,
+    String? cancelledBy,
   }) {
     return TaskModel(
       id: id,
@@ -24,26 +33,32 @@ class TaskModel {
       items: items,
       createdAt: createdAt,
       updatedAt: updatedAt,
+      cancelReason: cancelReason ?? this.cancelReason,
+      cancelledBy: cancelledBy ?? this.cancelledBy,
     );
   }
 
   factory TaskModel.fromJson(Map<String, dynamic> json) {
     List<dynamic> parsedItems = json['items'] ?? [];
     for (var item in parsedItems) {
-      if (item['picked'] == true || item['isPicked'] == true) {
-        item['isPicked'] = true;
-      } else {
-        item['isPicked'] = false;
-      }
+      item['isPicked'] = (item['picked'] == true || item['isPicked'] == true);
+    }
+
+    String parsedStatus = json['status'] ?? 'Bilinmiyor';
+    if (parsedStatus == 'DELETED') {
+      parsedStatus = 'CANCELLED';
     }
 
     return TaskModel(
       id: json['id'],
-      status: json['status'] ?? 'Bilinmiyor',
+      status: parsedStatus,
       assignedWorkerName: json['assignedWorkerName'] ?? 'Atanmamış',
       items: parsedItems,
       createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
       updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
+      cancelReason: json['cancelReason'],
+      cancelledBy: json['cancelledBy'],
+      completionDuration: json['completionDuration']
     );
   }
 }

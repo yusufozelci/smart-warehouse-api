@@ -14,7 +14,8 @@ import 'package:smart_warehouse_app/services/websocket_service.dart';
 import '../models/task_model.dart';
 import "services/route_services.dart";
 import '../painters/route_painter.dart';
-import 'package:stomp_dart_client/stomp_dart_client.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 
 class WarehouseMapPage extends StatefulWidget {
   final bool isDashboard;
@@ -80,23 +81,81 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     _animController?.dispose();
     super.dispose();
   }
+  Map<String, double> _calculateOccupancyRates() {
+    if (_shelves.isEmpty) return {'genel': 0.0, 'kat1': 0.0, 'kat2': 0.0, 'kat3': 0.0};
+    double maxShelfCapacity = 320.0;
+
+    double totalCapacity = _shelves.length * maxShelfCapacity;
+    double f1Capacity = _shelves.where((s) => s['floor'] == 1).length * maxShelfCapacity;
+    double f2Capacity = _shelves.where((s) => s['floor'] == 2).length * maxShelfCapacity;
+    double f3Capacity = _shelves.where((s) => s['floor'] == 3).length * maxShelfCapacity;
+
+    double currentTotalWeight = 0.0, f1Weight = 0.0, f2Weight = 0.0, f3Weight = 0.0;
+
+    for (var product in _allProducts) {
+      double totalProdWeight = (product['stockQuantity'] ?? 0).toDouble() * (product['weight'] ?? 0.0).toDouble();
+      if (totalProdWeight > 0) {
+        currentTotalWeight += totalProdWeight;
+        var shelf = _shelves.firstWhere((s) => s['shelfCode'] == product['shelfCode'], orElse: () => null);
+        if (shelf != null) {
+          int floor = shelf['floor'] ?? 1;
+          if (floor == 1) f1Weight += totalProdWeight;
+          else if (floor == 2) f2Weight += totalProdWeight;
+          else if (floor == 3) f3Weight += totalProdWeight;
+        }
+      }
+    }
+
+    return {
+      'genel': totalCapacity > 0 ? ((currentTotalWeight / totalCapacity) * 100).clamp(0.0, 100.0) : 0.0,
+      'kat1': f1Capacity > 0 ? ((f1Weight / f1Capacity) * 100).clamp(0.0, 100.0) : 0.0,
+      'kat2': f2Capacity > 0 ? ((f2Weight / f2Capacity) * 100).clamp(0.0, 100.0) : 0.0,
+      'kat3': f3Capacity > 0 ? ((f3Weight / f3Capacity) * 100).clamp(0.0, 100.0) : 0.0,
+    };
+  }
+
+  List<Map<String, dynamic>> _getWeeklyTaskStats() {
+    List<Map<String, dynamic>> stats = [];
+    DateTime today = DateTime.now();
+
+    for (int i = 6; i >= 0; i--) {
+      DateTime date = today.subtract(Duration(days: i));
+      String dayLabel = DateFormat('E', 'tr').format(date); // Örn: Pzt, Sal
+
+      int createdCount = _tasks.where((t) {
+        if (t.createdAt == null) return false;
+        return t.createdAt!.toLocal().year == date.year && t.createdAt!.toLocal().month == date.month && t.createdAt!.toLocal().day == date.day;
+      }).length;
+
+      int completedCount = _tasks.where((t) {
+        if (t.status != 'COMPLETED' || t.updatedAt == null) return false;
+        return t.updatedAt!.toLocal().year == date.year && t.updatedAt!.toLocal().month == date.month && t.updatedAt!.toLocal().day == date.day;
+      }).length;
+
+      stats.add({'day': dayLabel, 'created': createdCount, 'completed': completedCount});
+    }
+    return stats;
+  }
 
   void _sortTaskItems(TaskModel task) {
     if (_shelves.isEmpty) return;
     List<dynamic> items = List.from(task.items);
 
-    for (var item in items) {
+    List<dynamic> pickedItems = items.where((i) => i['isPicked'] == true).toList();
+    List<dynamic> unpickedItems = items.where((i) => i['isPicked'] != true).toList();
+
+    for (var item in unpickedItems) {
       var s = _shelves.firstWhere((sh) => sh['shelfCode'] == item['shelfCode'], orElse: () => null);
       item['_floor'] = s != null ? (s['floor'] ?? 1) : 1;
       item['_x'] = s != null ? (s['coordinateX'] ?? 0) : 0;
       item['_y'] = s != null ? (s['coordinateY'] ?? 0) : 0;
     }
 
-    List<dynamic> sortedItems = [];
-    var floors = items.map((i) => i['_floor']).toSet().toList()..sort();
+    List<dynamic> sortedUnpicked = [];
+    var floors = unpickedItems.map((i) => i['_floor']).toSet().toList()..sort();
 
     for (var floor in floors) {
-      var floorItems = items.where((i) => i['_floor'] == floor).toList();
+      var floorItems = unpickedItems.where((i) => i['_floor'] == floor).toList();
       double currentX = 80.0;
       double currentY = 480.0;
 
@@ -108,17 +167,18 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         });
 
         var nearest = floorItems.removeAt(0);
-        sortedItems.add(nearest);
+        sortedUnpicked.add(nearest);
         currentX = nearest['_x'].toDouble();
         currentY = nearest['_y'].toDouble();
       }
     }
-
     task.items.clear();
-    task.items.addAll(sortedItems);
+    task.items.addAll(pickedItems);
+    task.items.addAll(sortedUnpicked);
   }
 
   Future<void> _fetchAllData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -133,8 +193,10 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         final tasks = await TaskService().getAllTasks();
 
         if (workerRes.statusCode == 200) {
-          _workers = jsonDecode(workerRes.body);
-          _tasks = tasks;
+          setState(() {
+            _workers = jsonDecode(workerRes.body);
+            _tasks = tasks;
+          });
         }
       }
 
@@ -167,7 +229,9 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         }
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -294,11 +358,11 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
 
   void _focusOnTask(TaskModel task) {
     _sortTaskItems(task);
+
     setState(() {
       _focusedTask = task;
       _selectedShelf = null;
     });
-
     if (task.items.isNotEmpty) {
       String? targetShelfCode = task.items.first['shelfCode'];
       if (targetShelfCode != null) {
@@ -308,9 +372,151 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
             _selectedFloor = shelfData['floor'] ?? 1;
           });
         }
-        _focusOnShelf(targetShelfCode);
       }
     }
+    _showTaskItemsDialog(task);
+  }
+
+  void _showTaskItemsDialog(TaskModel task) {
+    showDialog(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(
+              children: [
+                const Icon(Icons.route, color: Color(0xFF6200EA)),
+                const SizedBox(width: 8),
+                Text("Görev #${task.id} Toplama Rotası", style: const TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            content: SizedBox(
+              width: 500,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (task.status == 'COMPLETED' && task.completionDuration != null && task.completionDuration != "-")
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 15),
+                      padding: const EdgeInsets.all(12),
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.green.shade200)
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.timer, color: Colors.green, size: 20),
+                          const SizedBox(width: 8),
+                          Text("Tamamlanma Süresi: ${task.completionDuration}",
+                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 14)),
+                        ],
+                      ),
+                    ),
+                  task.items.isEmpty
+                      ? const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text("Bu görevde henüz ürün bulunmuyor.", style: TextStyle(color: Colors.grey)),
+                  )
+                      : Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: task.items.length,
+                      separatorBuilder: (context, index) => const Divider(),
+                      itemBuilder: (context, index) {
+                        var item = task.items[index];
+                        bool isPicked = item['isPicked'] == true;
+                        String timeStr = "";
+                        String timeLabel = "";
+
+                        if (isPicked && item['updatedAt'] != null) {
+                          try {
+                            DateTime dt = DateTime.parse(item['updatedAt']).toLocal();
+                            timeStr = "${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+                            timeLabel = "Toplandı";
+                          } catch (e) {}
+                        } else if (!isPicked && item['createdAt'] != null) {
+                          try {
+                            DateTime dt = DateTime.parse(item['createdAt']).toLocal();
+                            timeStr = "${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+                            timeLabel = "Eklendi";
+                          } catch (e) {}
+                        }
+
+                        int orderNumber = 0;
+                        if (!isPicked) {
+                          int pickedCountBeforeThis = task.items.take(index).where((i) => i['isPicked'] == true).length;
+                          orderNumber = index - pickedCountBeforeThis + 1;
+                        }
+
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: CircleAvatar(
+                            backgroundColor: isPicked ? Colors.green : const Color(0xFF1A237E),
+                            child: isPicked
+                                ? const Icon(Icons.check, color: Colors.white, size: 18)
+                                : Text("$orderNumber", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          ),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                    item['productName'] ?? 'Bilinmeyen Ürün',
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        decoration: isPicked ? TextDecoration.lineThrough : null,
+                                        color: isPicked ? Colors.grey : Colors.black87
+                                    )
+                                ),
+                              ),
+                              if (timeStr.isNotEmpty)
+                                Text(
+                                    "$timeLabel: $timeStr",
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        color: isPicked ? Colors.green : Colors.grey.shade500,
+                                        fontWeight: FontWeight.bold
+                                    )
+                                ),
+                            ],
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 4),
+                              Text("Kat: ${item['_floor'] ?? 1} | Raf: ${item['shelfCode'] ?? '-'} | SKU: ${item['sku'] ?? '-'}"),
+                            ],
+                          ),
+                          trailing: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey.shade300)
+                            ),
+                            child: Text(
+                                "${item['quantity']} Adet",
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Kapat", style: TextStyle(color: Color(0xFF6200EA), fontWeight: FontWeight.bold)),
+              )
+            ],
+          );
+        }
+    );
   }
 
   RouteData _getRouteData() {
@@ -631,185 +837,336 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
   }
 
   void _showAddProductToTaskDialog(TaskModel task) {
-   Map<String, dynamic>? selectedProduct;
-   TextEditingController qtyController = TextEditingController(text: "1");
-   TextEditingController? prodSearchController;
+    Map<String, dynamic>? selectedProduct;
+    TextEditingController qtyController = TextEditingController(text: "1");
+    TextEditingController? prodSearchController;
 
-   showDialog(
-     context: context,
-     builder: (context) {
-       return StatefulBuilder(
-         builder: (context, setStateSB) {
-           return AlertDialog(
-             title: Text("Görev #${task.id} - Ürün Ekle", style: const TextStyle(fontWeight: FontWeight.bold)),
-             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-             content: SizedBox(
-               width: 500,
-               child: Column(
-                 mainAxisSize: MainAxisSize.min,
-                 children: [
-                   Container(
-                     padding: const EdgeInsets.all(12),
-                     decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-                     child: Row(
-                       children: [
-                         Expanded(
-                           flex: 3,
-                           child: Autocomplete<Map<String, dynamic>>(
-                             displayStringForOption: (option) => "${option['name']} (Stok: ${option['stockQuantity']})",
-                             optionsBuilder: (TextEditingValue textEditingValue) {
-                               if (textEditingValue.text.isEmpty) {
-                                 return _allProducts.cast<Map<String, dynamic>>();
-                               }
-                               return _allProducts.where((p) =>
-                               p['name'].toString().toLowerCase().contains(textEditingValue.text.toLowerCase()) ||
-                                   (p['sku'] != null && p['sku'].toString().toLowerCase().contains(textEditingValue.text.toLowerCase()))
-                               ).cast<Map<String, dynamic>>();
-                             },
-                             onSelected: (Map<String, dynamic> selection) {
-                               setStateSB(() => selectedProduct = selection);
-                             },
-                             fieldViewBuilder: (context, textController, focusNode, onFieldSubmitted) {
-                               prodSearchController = textController;
-                               return TextField(
-                                 controller: textController,
-                                 focusNode: focusNode,
-                                 decoration: InputDecoration(
-                                   labelText: "Ürün Ara",
-                                   prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
-                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                                   isDense: true,
-                                 ),
-                                 onChanged: (val) {
-                                   if(val.isEmpty) setStateSB(() => selectedProduct = null);
-                                 },
-                               );
-                             },
-                           ),
-                         ),
-                         const SizedBox(width: 8),
-                         Expanded(
-                           flex: 1,
-                           child: TextField(
-                             controller: qtyController,
-                             keyboardType: TextInputType.number,
-                             decoration: const InputDecoration(labelText: "Adet", border: OutlineInputBorder(), isDense: true),
-                           ),
-                         ),
-                       ],
-                     ),
-                   ),
-                   if (selectedProduct != null) ...[
-                     const SizedBox(height: 16),
-                     Card(
-                       child: Padding(
-                         padding: const EdgeInsets.all(12.0),
-                         child: Column(
-                           crossAxisAlignment: CrossAxisAlignment.start,
-                           children: [
-                             Text("Seçilen Ürün: ${selectedProduct!['name']}", style: const TextStyle(fontWeight: FontWeight.bold)),
-                             Text("SKU: ${selectedProduct!['sku'] ?? 'N/A'}"),
-                             Text("Stok: ${selectedProduct!['stockQuantity']}"),
-                           ],
-                         ),
-                       ),
-                     )
-                   ]
-                 ],
-               ),
-             ),
-             actions: [
-               TextButton(
-                 onPressed: () => Navigator.pop(context),
-                 child: const Text("İptal"),
-               ),
-               ElevatedButton(
-                 style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                 onPressed: selectedProduct == null ? null : () async {
-                   int qty = int.tryParse(qtyController.text) ?? 1;
-                   bool success = await TaskService().addItemToTask(task.id, selectedProduct!['id'], qty);
-                    
-                   Navigator.pop(context);
-                    
-                   if (success) {
-                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ürün başarıyla eklendi!"), backgroundColor: Colors.green));
-                     _fetchAllData();
-                   } else {
-                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ürün eklenemedi!"), backgroundColor: Colors.red));
-                   }
-                 },
-                 child: const Text("Ürün Ekle", style: TextStyle(color: Colors.white)),
-               ),
-             ],
-           );
-         },
-       );
-     },
-   );
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateSB) {
+            return AlertDialog(
+              title: Text("Görev #${task.id} - Ürün Ekle", style: const TextStyle(fontWeight: FontWeight.bold)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              content: SizedBox(
+                width: 500,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: Autocomplete<Map<String, dynamic>>(
+                              displayStringForOption: (option) => "${option['name']} (Stok: ${option['stockQuantity']})",
+                              optionsBuilder: (TextEditingValue textEditingValue) {
+                                if (textEditingValue.text.isEmpty) {
+                                  return _allProducts.cast<Map<String, dynamic>>();
+                                }
+                                return _allProducts.where((p) =>
+                                p['name'].toString().toLowerCase().contains(textEditingValue.text.toLowerCase()) ||
+                                    (p['sku'] != null && p['sku'].toString().toLowerCase().contains(textEditingValue.text.toLowerCase()))
+                                ).cast<Map<String, dynamic>>();
+                              },
+                              onSelected: (Map<String, dynamic> selection) {
+                                setStateSB(() => selectedProduct = selection);
+                              },
+                              fieldViewBuilder: (context, textController, focusNode, onFieldSubmitted) {
+                                prodSearchController = textController;
+                                return TextField(
+                                  controller: textController,
+                                  focusNode: focusNode,
+                                  decoration: InputDecoration(
+                                    labelText: "Ürün Ara",
+                                    prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
+                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                    isDense: true,
+                                  ),
+                                  onChanged: (val) {
+                                    if(val.isEmpty) setStateSB(() => selectedProduct = null);
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 1,
+                            child: TextField(
+                              controller: qtyController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(labelText: "Adet", border: OutlineInputBorder(), isDense: true),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (selectedProduct != null) ...[
+                      const SizedBox(height: 16),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text("Seçilen Ürün: ${selectedProduct!['name']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                              Text("SKU: ${selectedProduct!['sku'] ?? 'N/A'}"),
+                              Text("Stok: ${selectedProduct!['stockQuantity']}"),
+                            ],
+                          ),
+                        ),
+                      )
+                    ]
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("İptal"),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                  onPressed: selectedProduct == null ? null : () async {
+                    int qty = int.tryParse(qtyController.text) ?? 1;
+                    bool success = await TaskService().addItemToTask(task.id, selectedProduct!['id'], qty);
+
+                    Navigator.pop(context);
+
+                    if (success) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ürün başarıyla eklendi!"), backgroundColor: Colors.green));
+                      _fetchAllData();
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ürün eklenemedi!"), backgroundColor: Colors.red));
+                    }
+                  },
+                  child: const Text("Ürün Ekle", style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
-  void _showDeleteTaskDialog(TaskModel task) {
-   showDialog(
-     context: context,
-     builder: (context) {
-       return AlertDialog(
-         title: const Text("Görevi Sil", style: TextStyle(fontWeight: FontWeight.bold)),
-         content: Text("Görev #${task.id} silinecek. Emin misiniz? (Sadece başlanmamış görevler silinebilir)"),
-         actions: [
-           TextButton(
-             onPressed: () => Navigator.pop(context),
-             child: const Text("İptal"),
-           ),
-           ElevatedButton(
-             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-             onPressed: () async {
-               bool success = await TaskService().deleteTask(task.id);
-               Navigator.pop(context);
-                 
-               if (success) {
-                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Görev silindi!"), backgroundColor: Colors.green));
-                 _fetchAllData();
-               } else {
-                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Görev silinemedi!"), backgroundColor: Colors.red));
-               }
-             },
-             child: const Text("Sil", style: TextStyle(color: Colors.white)),
-           )
-         ],
-       );
-     },
-   );
+  void _showCancelTaskDialog(TaskModel task) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String firstName = prefs.getString('firstName') ?? "Bilinmeyen";
+    String lastName = prefs.getString('lastName') ?? "Kullanıcı";
+    String role = prefs.getString('role') ?? "ADMIN";
+    String formattedCancelledBy = "$firstName $lastName ($role)";
+
+    final formKey = GlobalKey<FormState>();
+    final TextEditingController otherReasonController = TextEditingController();
+
+    int cancelMode = 0;
+    String? selectedReason;
+    int? selectedProductId;
+
+    final List<String> fullTaskCancelReasons = [
+      "Yanlışlıkla Oluşturuldu",
+      "Sipariş İptal Edildi",
+      "Mükerrer (Tekrar Eden) Görev",
+      "Saha Personeli Talebi",
+      "Diğer"
+    ];
+
+    final List<String> itemRemoveReasons = [
+      "Ürün Stokta Yok",
+      "Hasarlı/Kusurlu Ürün",
+      "Yanlış Ürün Ataması",
+      "Diğer"
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateSB) {
+            List<String> activeReasons = cancelMode == 0 ? fullTaskCancelReasons : itemRemoveReasons;
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Row(
+                children: [
+                  Icon(cancelMode == 0 ? Icons.warning_amber_rounded : Icons.remove_shopping_cart, color: Colors.red),
+                  const SizedBox(width: 8),
+                  Text(cancelMode == 0 ? "Görevi İptal Et" : "Görevden Ürün Çıkar", style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
+                        child: Column(
+                          children: [
+                            RadioListTile<int>(
+                              title: const Text("Tüm Görevi İptal Et", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                              value: 0,
+                              groupValue: cancelMode,
+                              activeColor: Colors.red,
+                              onChanged: (val) {
+                                setStateSB(() {
+                                  cancelMode = val!;
+                                  selectedReason = null;
+                                });
+                              },
+                            ),
+                            RadioListTile<int>(
+                              title: const Text("Görevden Ürün Çıkar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                              subtitle: const Text("Sadece seçili ürünü iptal eder", style: TextStyle(fontSize: 12)),
+                              value: 1,
+                              groupValue: cancelMode,
+                              activeColor: Colors.orange,
+                              onChanged: (val) {
+                                setStateSB(() {
+                                  cancelMode = val!;
+                                  selectedReason = null;
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      if (cancelMode == 1) ...[
+                        DropdownButtonFormField<int>(
+                          isExpanded: true,
+                          value: selectedProductId,
+                          decoration: InputDecoration(
+                            labelText: "Çıkarılacak Ürün",
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          items: task.items.fold<Map<int, dynamic>>({}, (map, item) {
+                            if (item['productId'] != null) {
+                              map[item['productId']] = item;
+                            }
+                            return map;
+                          }).values.map((item) {
+                            return DropdownMenuItem<int>(
+                              value: item['productId'],
+                              child: Text("${item['productName']} (${item['quantity']} Adet)", overflow: TextOverflow.ellipsis),
+                            );
+                          }).toList(),
+                          onChanged: (val) => setStateSB(() => selectedProductId = val),
+                          validator: (value) => cancelMode == 1 && value == null ? "Lütfen bir ürün seçin" : null,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
+                      DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        value: selectedReason,
+                        decoration: InputDecoration(
+                          labelText: "İptal Nedeni",
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        items: activeReasons.map((reason) => DropdownMenuItem(value: reason, child: Text(reason))).toList(),
+                        onChanged: (val) => setStateSB(() => selectedReason = val),
+                        validator: (value) => value == null ? "Lütfen bir neden seçin" : null,
+                      ),
+
+                      if (selectedReason == "Diğer") ...[
+                        const SizedBox(height: 15),
+                        TextFormField(
+                          controller: otherReasonController,
+                          maxLines: 3,
+                          decoration: InputDecoration(
+                            labelText: "Açıklama (Zorunlu)",
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                            alignLabelWithHint: true,
+                          ),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) return 'Lütfen açıklama girin';
+                            return null;
+                          },
+                        ),
+                      ]
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Vazgeç", style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: cancelMode == 0 ? Colors.red : Colors.orange, foregroundColor: Colors.white),
+                  onPressed: () async {
+                    if (formKey.currentState!.validate()) {
+                      String finalReason = selectedReason == "Diğer" ? otherReasonController.text.trim() : selectedReason!;
+
+                      bool success = false;
+
+                      if (cancelMode == 0) {
+                        success = await TaskService().deleteTask(task.id, reason: finalReason, cancelledBy: formattedCancelledBy);
+                      } else {
+                        success = await TaskService().removeItemFromTask(task.id, selectedProductId!, reason: finalReason, cancelledBy: formattedCancelledBy);
+                      }
+
+                      if (!mounted) return;
+                      Navigator.pop(context);
+
+                      if (success) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text(cancelMode == 0 ? "Görev başarıyla iptal edildi." : "Ürün başarıyla çıkarıldı."),
+                            backgroundColor: Colors.green
+                        ));
+                        _fetchAllData();
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("İşlem başarısız oldu!"), backgroundColor: Colors.red));
+                      }
+                    }
+                  },
+                  child: Text(cancelMode == 0 ? "İptal Et" : "Ürünü Çıkar"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-   return Scaffold(
-     backgroundColor: Colors.white,
-     body: SafeArea(
-       child: Stack(
-         children: [
-           LayoutBuilder(
-               builder: (context, constraints) {
-                 bool isMobile = constraints.maxWidth < 800;
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            LayoutBuilder(
+                builder: (context, constraints) {
+                  bool isMobile = constraints.maxWidth < 800;
 
-                 if (isMobile) {
-                   if (_isLoading) return const Center(child: CircularProgressIndicator());
-                   final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
-                   int totalShelves = currentFloorShelves.length;
-                   int occupiedShelves = currentFloorShelves.where((s) {
-                     return _allProducts.any((p) => p['shelfCode'] == s['shelfCode'] && (p['stockQuantity'] ?? 0) > 0);
-                   }).length;
-                   int emptyShelves = totalShelves - occupiedShelves;
+                  if (isMobile) {
+                    if (_isLoading) return const Center(child: CircularProgressIndicator());
+                    final currentFloorShelves = _shelves.where((s) => (s['floor'] ?? 1) == _selectedFloor).toList();
+                    int totalShelves = currentFloorShelves.length;
+                    int occupiedShelves = currentFloorShelves.where((s) {
+                      return _allProducts.any((p) => p['shelfCode'] == s['shelfCode'] && (p['stockQuantity'] ?? 0) > 0);
+                    }).length;
+                    int emptyShelves = totalShelves - occupiedShelves;
 
-                   if (widget.isWorkerMode) {
-                     return Column(
-                       children: [
-                         Expanded(
-                           flex: 5,
-                           child: Container(
-                             decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 2))),
-                             child: _buildMapViewer(currentFloorShelves, isMobile: true),
-                           ),
+                    if (widget.isWorkerMode) {
+                      return Column(
+                        children: [
+                          Expanded(
+                            flex: 5,
+                            child: Container(
+                              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 2))),
+                              child: _buildMapViewer(currentFloorShelves, isMobile: true),
+                            ),
                           ),
                           Expanded(
                             flex: 4,
@@ -979,7 +1336,22 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
 
   Widget _buildWorkerTaskItem(Map<String, dynamic> item, bool isPicked, bool isCurrent, int orderNumber) {
     int requestedQty = item['quantity'] ?? 1;
+    String timeStr = "";
+    String timeLabel = "";
 
+    if (isPicked && item['updatedAt'] != null) {
+      try {
+        DateTime dt = DateTime.parse(item['updatedAt']).toLocal();
+        timeStr = "${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+        timeLabel = "Toplandı";
+      } catch (e) {}
+    } else if (!isPicked && item['createdAt'] != null) {
+      try {
+        DateTime dt = DateTime.parse(item['createdAt']).toLocal();
+        timeStr = "${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+        timeLabel = "Eklendi";
+      } catch (e) {}
+    }
     if (isCurrent) {
       return Card(
         elevation: 4,
@@ -995,6 +1367,12 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                   CircleAvatar(backgroundColor: const Color(0xFF1A237E), radius: 14, child: Text("$orderNumber", style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))),
                   const SizedBox(width: 10),
                   Expanded(child: Text(item['productName'] ?? 'Ürün', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+                  if (timeStr.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(4)),
+                      child: Text("$timeLabel: $timeStr", style: TextStyle(fontSize: 10, color: Colors.grey.shade700, fontWeight: FontWeight.bold)),
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -1026,6 +1404,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                       if (success) {
                         setState(() {
                           item['isPicked'] = true;
+                          item['updatedAt'] = DateTime.now().toUtc().toIso8601String();
                         });
 
                         int nextIndex = _focusedTask!.items.indexWhere((i) => i['isPicked'] != true);
@@ -1050,9 +1429,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                       } else {
                         showGlobalNotification("Ürün okutulurken bir hata oluştu!");
                       }
-                    }
-                    else if (result == false) {
-                      // KESİN ÇÖZÜM: SnackBar yerine ekranın ortasında çıkan Dialog!
+                    } else if (result == false) {
                       showDialog(
                           context: context,
                           builder: (BuildContext context) {
@@ -1095,7 +1472,6 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         ),
       );
     }
-
     return Opacity(
       opacity: isPicked ? 0.6 : 0.9,
       child: Card(
@@ -1113,7 +1489,20 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                   : Text("$orderNumber", style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold))
           ),
           title: Text(item['productName'] ?? 'Ürün', style: TextStyle(fontWeight: FontWeight.bold, decoration: isPicked ? TextDecoration.lineThrough : null)),
-          subtitle: Text("Kat: ${item['_floor']} | Raf: ${item['shelfCode']} | Adet: $requestedQty"),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text("Kat: ${item['_floor']} | Raf: ${item['shelfCode']} | Adet: $requestedQty"),
+              if (timeStr.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2.0),
+                  child: Text(
+                      "$timeLabel: $timeStr",
+                      style: TextStyle(fontSize: 10, color: isPicked ? Colors.green.shade700 : Colors.grey.shade600, fontWeight: FontWeight.bold)
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1134,7 +1523,6 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
       ),
     );
   }
-
   Widget _buildDesktopLayout(BoxConstraints constraints, List currentFloorShelves, int totalShelves, int occupiedShelves, int emptyShelves) {
     if (widget.isDashboard) {
       return Row(
@@ -1142,7 +1530,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         children: [
           Expanded(flex: 1, child: _buildMapContainer(currentFloorShelves, totalShelves, occupiedShelves, emptyShelves)),
           const SizedBox(width: 24),
-          Expanded(flex: 1, child: _buildTaskPanel()),
+          Expanded(flex: 1, child: _buildAnalyticsPanel()),
         ],
       );
     } else {
@@ -1177,6 +1565,178 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
         ],
       );
     }
+  }
+
+  Widget _buildAnalyticsPanel() {
+    var occupancy = _calculateOccupancyRates();
+    int completed = _tasks.where((t) => t.status == 'COMPLETED').length;
+    int inProgress = _tasks.where((t) => t.status == 'IN_PROGRESS').length;
+    int pending = _tasks.where((t) => t.status == 'PENDING').length;
+    int totalActiveTasks = completed + inProgress + pending;
+    double productivity = totalActiveTasks == 0 ? 0 : (completed / totalActiveTasks) * 100;
+
+    return Container(
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade300, width: 1.5),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))]
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: const BorderRadius.only(topLeft: Radius.circular(16), topRight: Radius.circular(16)), border: Border(bottom: BorderSide(color: Colors.grey.shade200))),
+            child: const Row(
+              children: [
+                Icon(Icons.analytics, color: Color(0xFF6200EA)),
+                SizedBox(width: 10),
+                Text("Depo Performans & Kapasite", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Gerçek Zamanlı Doluluk", style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87)),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildOccupancyIndicator("Genel", occupancy['genel']!, const Color(0xFF6200EA), 60),
+                      _buildOccupancyIndicator("1. Kat", occupancy['kat1']!, Colors.blue, 45),
+                      _buildOccupancyIndicator("2. Kat", occupancy['kat2']!, Colors.orange, 45),
+                      _buildOccupancyIndicator("3. Kat", occupancy['kat3']!, Colors.teal, 45),
+                    ],
+                  ),
+
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Divider(),
+                  ),
+                  const Text("Görev Verimliliği", style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87)),
+                  const SizedBox(height: 30),
+
+                  SizedBox(
+                    height: 220,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        PieChart(
+                          PieChartData(
+                            sectionsSpace: 6,
+                            centerSpaceRadius: 75,
+                            startDegreeOffset: -90,
+                            sections: [
+                              PieChartSectionData(
+                                color: const Color(0xFF6200EA),
+                                value: completed == 0 ? 0.1 : completed.toDouble(),
+                                title: '',
+                                radius: 28,
+                              ),
+                              PieChartSectionData(
+                                color: const Color(0xFFB388FF),
+                                value: inProgress == 0 ? 0.1 : inProgress.toDouble(),
+                                title: '',
+                                radius: 28,
+                              ),
+                              PieChartSectionData(
+                                color: const Color(0xFFEDE7F6),
+                                value: pending == 0 ? 0.1 : pending.toDouble(),
+                                title: '',
+                                radius: 28,
+                              ),
+                            ],
+                          ),
+                        ),
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              "%${productivity.toStringAsFixed(0)}",
+                              style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w900, color: Color(0xFF1A1A24)),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              "Verimlilik",
+                              style: TextStyle(fontSize: 14, color: Colors.grey.shade500, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 30),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildLegendItem(const Color(0xFF6200EA), "Tamamlanan"),
+                      const SizedBox(width: 20),
+                      _buildLegendItem(const Color(0xFFB388FF), "İşlemde"),
+                      const SizedBox(width: 20),
+                      _buildLegendItem(const Color(0xFFEDE7F6), "Bekleyen"),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLegendItem(Color color, String text) {
+    return Row(
+      children: [
+        Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(text, style: const TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w600)),
+      ],
+    );
+  }
+  Widget _buildOccupancyIndicator(String title, double percentage, Color color, double radius) {
+    return Column(
+      children: [
+        SizedBox(
+          width: radius * 2,
+          height: radius * 2,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              CircularProgressIndicator(
+                value: percentage / 100,
+                backgroundColor: color.withOpacity(0.1),
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+                strokeWidth: radius == 60 ? 8 : 6,
+                strokeCap: StrokeCap.round,
+              ),
+              Center(
+                child: Text(
+                  "%${percentage.toStringAsFixed(1)}",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: radius == 60 ? 18 : 13, color: Colors.black87),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey.shade700, fontSize: radius == 60 ? 14 : 12)),
+      ],
+    );
   }
 
   Widget _buildMapContainer(List currentFloorShelves, int totalShelves, int occupiedShelves, int emptyShelves) {
@@ -1375,8 +1935,8 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                               onTap: () => _showAssignWorkerDialog(task),
                             ),
                             PopupMenuItem(
-                              child: const Text("Sil"),
-                              onTap: () => _showDeleteTaskDialog(task),
+                              child: const Text("İptal Et", style: TextStyle(color: Colors.red)),
+                              onTap: () => _showCancelTaskDialog(task),
                             ),
                           ],
                         )
@@ -1389,8 +1949,8 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                             ),
                             if (isPending)
                               PopupMenuItem(
-                                child: const Text("Sil"),
-                                onTap: () => _showDeleteTaskDialog(task),
+                                child: const Text("İptal Et", style: TextStyle(color: Colors.red)),
+                                onTap: () => _showCancelTaskDialog(task),
                               ),
                           ],
                         )
@@ -2169,7 +2729,7 @@ class PremiumGridPainter extends CustomPainter {
     final tp = TextPainter(
       text: TextSpan(text: "$text\n←────────────→", style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 4, height: 1.5)),
       textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
+      textDirection: ui.TextDirection.ltr,
     );
     tp.layout();
 
@@ -2183,7 +2743,7 @@ class PremiumGridPainter extends CustomPainter {
   void _drawZoneHeader(Canvas canvas, String title, Offset offset, Color color) {
     final tp = TextPainter(
       text: TextSpan(text: title, style: TextStyle(color: color.withOpacity(0.6), fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: 2)),
-      textDirection: TextDirection.ltr,
+      textDirection: ui.TextDirection.ltr,
     );
     tp.layout();
     tp.paint(canvas, offset);
