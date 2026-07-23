@@ -85,7 +85,17 @@ class _CompletedTasksPageState extends State<CompletedTasksPage> {
                       children: [
                         Text("Toplayan: ${task.assignedWorkerName}", style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.w500)),
                         const SizedBox(height: 4),
-                        Text("Toplam ${task.items.length} Kalem Ürün", style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
+                        Row(
+                          children: [
+                            Text("Toplam ${task.items.length} Kalem Ürün", style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
+                            if (task.completionDuration != null && task.completionDuration != "-") ...[
+                              const Text(" • ", style: TextStyle(color: Colors.grey)),
+                              Icon(Icons.timer, size: 12, color: Colors.green),
+                              const SizedBox(width: 4),
+                              Text("${task.completionDuration}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12)),
+                            ]
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -121,7 +131,27 @@ class _CompletedTasksPageState extends State<CompletedTasksPage> {
                   child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20), decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
                 ),
                 Text("Görev (#${task.id}) Raporu", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: primaryColor)),
-                const SizedBox(height: 15),
+                if (task.completionDuration != null && task.completionDuration != "-")
+                  Container(
+                    margin: const EdgeInsets.symmetric(vertical: 15),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green.shade100)),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.timer, color: Colors.green, size: 24),
+                        const SizedBox(width: 10),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text("Tamamlanma Süresi", style: TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold)),
+                            Text("${task.completionDuration}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  const SizedBox(height: 15),
 
                 ...task.items.map((item) => Card(
                   elevation: 0,

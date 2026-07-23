@@ -9,13 +9,16 @@ import 'package:smart_warehouse_app/login_page.dart';
 import 'package:smart_warehouse_app/services/task_service.dart';
 import 'package:smart_warehouse_app/services/websocket_service.dart';
 import 'package:smart_warehouse_app/global_utils.dart';
+import 'package:smart_warehouse_app/stock_statistics_page.dart';
 import 'package:smart_warehouse_app/worker_management_page.dart';
 import 'cancelled_task_page.dart';
 import 'inventory_page.dart';
+import 'operation_statistics_page.dart';
 import 'product_catalog_page.dart';
 import 'warehouse_map_page.dart';
 import 'completed_tasks_page.dart';
 import 'error_logs_page.dart';
+import 'statistics_page.dart';
 
 class AdminHomePage extends StatefulWidget {
   const AdminHomePage({super.key});
@@ -56,13 +59,13 @@ class _AdminHomePageState extends State<AdminHomePage> {
   }
 
   void _onTaskReceived(Map<String, dynamic> data) {
-    if (mounted) {
-      setState(() {
-        _liveUpdates.insert(0, data);
-        if(data['status'] == 'COMPLETED') _completedTasks++;
-      });
-      showGlobalNotification("Yeni İşlem: ${data['message'] ?? 'Ürün okutuldu'}");
-    }
+    if (!mounted) return;
+    setState(() {
+      _liveUpdates.insert(0, data);
+      if(data['status'] == 'COMPLETED') _completedTasks++;
+    });
+    showGlobalNotification("Yeni İşlem: ${data['message'] ?? 'Ürün okutuldu'}");
+    _fetchStats();
   }
 
   Future<void> _fetchStats() async {
@@ -73,6 +76,8 @@ class _AdminHomePageState extends State<AdminHomePage> {
       final response = await http.get(Uri.parse('$baseUrl/api/admin/stats'), headers: headers);
       final workerResponse = await http.get(Uri.parse('$baseUrl/api/v1/workers'), headers: headers);
       final deletedTasks = await TaskService().getDeletedTasks();
+
+      if (!mounted) return;
 
       if (response.statusCode == 200 && workerResponse.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -92,6 +97,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
       }
     } catch (e) {
       debugPrint("İstatistikler yüklenirken hata: $e");
+      if (!mounted) return;
       setState(() => _isLoadingStats = false);
     }
   }
@@ -150,6 +156,8 @@ class _AdminHomePageState extends State<AdminHomePage> {
           _buildMenuTile(1, "Personeller", Icons.people_outline),
           _buildMenuTile(2, "Stok Yönetimi", Icons.inventory_2_outlined),
           _buildMenuTile(3, "Görev & Rotalar", Icons.map_outlined),
+          _buildMenuTile(4, "Operasyon İstatistiği", Icons.insert_chart_outlined),
+          _buildMenuTile(5, "Stok İstatistiği", Icons.insights),
           const Spacer(),
           Material(
             color: Colors.transparent,
@@ -242,6 +250,8 @@ class _AdminHomePageState extends State<AdminHomePage> {
       case 1: return const WorkerManagementPage(initialFilter: "ALL");
       case 2: return const InventoryPage();
       case 3: return const WarehouseMapPage(isDashboard: false);
+      case 4: return const OperationStatisticsPage();
+      case 5: return const StockStatisticsPage();
       default: return _buildDashboardScreen(isDesktop);
     }
   }

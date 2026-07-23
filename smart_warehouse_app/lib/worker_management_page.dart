@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -205,7 +206,11 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                           TextFormField(
                               controller: phoneCtrl,
                               keyboardType: TextInputType.phone,
-                              decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android))
+                              decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android)),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(11),
+                            ],
                           ),
                           const SizedBox(height: 15),
                           DropdownButtonFormField<String>(
@@ -343,7 +348,11 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                         TextFormField(
                             controller: _phoneCtrl,
                             keyboardType: TextInputType.phone,
-                            decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android))
+                            decoration: const InputDecoration(labelText: "Telefon (Örn: +90555...)", prefixIcon: Icon(Icons.phone_android)),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                            LengthLimitingTextInputFormatter(11),
+                          ],
                         ),
                         const SizedBox(height: 10),
                         TextFormField(
@@ -358,8 +367,12 @@ class _WorkerManagementPageState extends State<WorkerManagementPage> {
                             ),
                           ),
                           validator: (value) {
-                            if (value == null || value.isEmpty) return 'Şifre boş olamaz.';
-                            if (value.length < 8) return 'Şifre en az 8 karakter olmalıdır.';
+                            if (value == null || value.isEmpty) return 'Şifre zorunludur';
+                            if (value.length < 6) return 'Şifre en az 6 karakter olmalıdır';
+                            if (!RegExp(r'(?=.*[a-z])').hasMatch(value)) return 'En az 1 küçük harf içermelidir';
+                            if (!RegExp(r'(?=.*[A-Z])').hasMatch(value)) return 'En az 1 büyük harf içermelidir';
+                            if (!RegExp(r'(?=.*\d)').hasMatch(value)) return 'En az 1 rakam içermelidir';
+                            return null;
                             return null;
                           },
                         ),

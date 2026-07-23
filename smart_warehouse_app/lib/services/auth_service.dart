@@ -22,37 +22,39 @@ class AuthService {
       final responseBody = jsonDecode(response.body);
       String token = responseBody['token'];
 
-      print("--------------------------------------------------");
-      print("DEBUG- Login Başarılı. Token:");
-      print(token);
-      print("--------------------------------------------------");
-
-
       Map<String, dynamic> decodedToken = JwtDecoder.decode(token);
-      print("DEBUG - Token içeriği (Okunabilir): $decodedToken");
-
-      int? workerId = responseBody['workerId'] ?? decodedToken['workerId'] ?? decodedToken['id'];
 
       SharedPreferences prefs = await SharedPreferences.getInstance();
       await prefs.setString('token', token);
 
+      int? workerId = responseBody['workerId'] ?? decodedToken['workerId'] ?? decodedToken['id'];
       if (workerId != null) {
         await prefs.setInt('workerId', workerId);
-        print("DEBUG - Kaydedilen Worker ID: $workerId");
-      } else {
-        print("UYARI: workerId bulunamadı! Backend ayarlarını kontrol edin.");
       }
+      String? fName = responseBody['firstName'] ?? decodedToken['firstName'];
+      String? lName = responseBody['lastName'] ?? decodedToken['lastName'];
+      if (fName == null && lName == null) {
+        String? fullName = responseBody['name'] ?? decodedToken['name'];
+        if (fullName != null && fullName.contains(' ')) {
+          List<String> parts = fullName.split(' ');
+          fName = parts.first;
+          lName = parts.sublist(1).join(' ');
+        } else if (fullName != null) {
+          fName = fullName;
+          lName = "";
+        }
+      }
+      await prefs.setString('firstName', fName ?? 'Bilinmeyen');
+      await prefs.setString('lastName', lName ?? 'Kullanıcı');
 
-      String workerName = responseBody['name'] ?? decodedToken['name'] ?? decodedToken['sub'] ?? 'Saha Personeli';
-      await prefs.setString('workerName', workerName);
-      print("DEBUG - Kaydedilen İsim: $workerName");
+      print("DEBUG - Giriş Yapan Kişi: $fName $lName");
 
       String role = decodedToken['role'] ?? 'WORKER';
       await prefs.setString('role', role);
-      print("DEBUG - Kaydedilen Rol: $role");
 
       return true;
     }
+
     print("DEBUG - Login Başarısız. Status Code: ${response.statusCode}");
     return false;
   }
