@@ -11,6 +11,7 @@ import 'package:smart_warehouse_app/services/websocket_service.dart';
 import 'package:smart_warehouse_app/global_utils.dart';
 import 'package:smart_warehouse_app/stock_statistics_page.dart';
 import 'package:smart_warehouse_app/worker_management_page.dart';
+import 'admin_worker_performance_page.dart';
 import 'cancelled_task_page.dart';
 import 'inventory_page.dart';
 import 'operation_statistics_page.dart';
@@ -158,6 +159,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
           _buildMenuTile(3, "Görev & Rotalar", Icons.map_outlined),
           _buildMenuTile(4, "Operasyon İstatistiği", Icons.insert_chart_outlined),
           _buildMenuTile(5, "Stok İstatistiği", Icons.insights),
+          _buildMenuTile(6, "Personel Performans", Icons.speed),
           const Spacer(),
           Material(
             color: Colors.transparent,
@@ -252,6 +254,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
       case 3: return const WarehouseMapPage(isDashboard: false);
       case 4: return const OperationStatisticsPage();
       case 5: return const StockStatisticsPage();
+      case 6: return const AdminWorkerPerformancePage();
       default: return _buildDashboardScreen(isDesktop);
     }
   }

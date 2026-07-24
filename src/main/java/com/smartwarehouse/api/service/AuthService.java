@@ -6,7 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.Random;
+import java.security.SecureRandom;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -21,18 +21,19 @@ public class AuthService {
     private static final String OTP_PREFIX = "OTP_";
     private static final String PERMIT_PREFIX = "RESET_PERMIT_";
     private static final long OTP_VALIDITY_MINUTES = 3;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     public void generateAndSendOtp(String contactInfo, boolean isSms) {
         if (isSms) {
             notificationService.sendVerificationSms(contactInfo);
             log.info("Doğrulama SMS'i gönderildi (Verify API) -> {}", contactInfo);
         } else {
-            String otp = String.format("%06d", new Random().nextInt(999999));
+            String otp = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
             redisTemplate.opsForValue().set(OTP_PREFIX + contactInfo, otp, OTP_VALIDITY_MINUTES, TimeUnit.MINUTES);
 
             String messageBody = "Smart Warehouse - Şifre Sıfırlama Kodunuz: " + otp + ". Kod 3 dakika geçerlidir.";
             notificationService.sendEmail(contactInfo, "Smart Warehouse - Şifre Sıfırlama", messageBody);
-            log.info("OTP Üretildi (Email) -> {}", otp);
+            log.info("E-posta şifre sıfırlama kodu oluşturuldu.");
         }
     }
 

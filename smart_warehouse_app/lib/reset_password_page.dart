@@ -36,10 +36,29 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     setState(() => _isLoading = false);
 
     if (response.statusCode == 200) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Şifre başarıyla yenilendi!"), backgroundColor: Colors.green));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Şifre başarıyla yenilendi!"),
+          backgroundColor: Colors.green,
+        ),
+      );
       Navigator.popUntil(context, (route) => route.isFirst);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Bir hata oluştu. Lütfen tekrar deneyin."), backgroundColor: Colors.redAccent));
+      String errorMessage = "Bir hata oluştu. Lütfen tekrar deneyin.";
+
+      try {
+        final body = jsonDecode(response.body);
+        if (body["error"] != null) {
+          errorMessage = body["error"];
+        }
+      } catch (_) {}
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
 

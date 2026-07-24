@@ -8,6 +8,7 @@ import com.smartwarehouse.api.security.JwtService;
 import com.smartwarehouse.api.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -29,6 +30,9 @@ public class AuthController {
 
     @PostMapping("/register")
     public ResponseEntity<String> register(@Valid @RequestBody WorkerRequestDto request) {
+        if (workerRepository.findByEmail(request.getEmail()).isPresent()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body("Bu e-posta adresi zaten kullanılıyor.");
+        }
         Worker worker = new Worker();
         worker.setFirstName(request.getFirstName());
         worker.setLastName(request.getLastName());
@@ -36,7 +40,7 @@ public class AuthController {
         worker.setUsername(request.getEmail());
         worker.setPassword(passwordEncoder.encode(request.getPassword()));
         worker.setPhoneNumber(request.getPhoneNumber());
-        worker.setRole(request.getRole() != null ? request.getRole() : Role.WORKER);
+        worker.setRole(Role.WORKER);
 
         workerRepository.save(worker);
         return ResponseEntity.ok("Personel başarıyla kaydedildi.");

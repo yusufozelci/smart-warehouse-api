@@ -5,11 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_warehouse_app/services/auth_service.dart';
+import 'package:smart_warehouse_app/services/performance_service.dart';
 import 'package:smart_warehouse_app/services/task_service.dart';
 import 'package:smart_warehouse_app/models/task_model.dart';
 import 'package:smart_warehouse_app/login_page.dart';
 import 'package:smart_warehouse_app/warehouse_map_page.dart';
 import 'package:smart_warehouse_app/services/websocket_service.dart';
+import 'package:smart_warehouse_app/widgets/performances/performance_dashboard_widget.dart';
+
+import 'models/worker_performance_model.dart';
 
 class WorkerHomePage extends StatefulWidget {
   const WorkerHomePage({super.key});
@@ -551,8 +555,7 @@ class _ProfileTab extends StatefulWidget {
 }
 
 class _ProfileTabState extends State<_ProfileTab> {
-  String _workerName = "Yükleniyor...";
-  int _completedTaskCount = 0;
+  WorkerPerformanceModel? _performanceData;
   bool _isLoading = true;
   final Color primaryColor = const Color(0xFF1A237E);
 
@@ -563,108 +566,86 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   Future<void> _loadProfileData() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String name = prefs.getString('workerName') ?? "Saha Personeli";
-
-    int count = 0;
     try {
-      final completedTasks = await TaskService().getCompletedTasksForWorker();
-      count = completedTasks.length;
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      int? workerId = prefs.getInt('workerId');
+      if (workerId != null) {
+        final data = await PerformanceService().getWorkerPerformance(workerId);
+        if (mounted) {
+          setState(() {
+            _performanceData = data;
+            _isLoading = false;
+          });
+        }
+      } else {
+        if (mounted) setState(() => _isLoading = false);
+      }
     } catch (e) {
-      print("İstatistik çekilemedi: $e");
-    }
-
-    if (mounted) {
-      setState(() {
-        _workerName = name;
-        _completedTaskCount = count;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+      debugPrint("Performans verisi çekilemedi: $e");
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            CircleAvatar(
-              radius: 55,
-              backgroundColor: primaryColor.withOpacity(0.1),
-              child: CircleAvatar(
-                radius: 50,
-                backgroundColor: primaryColor,
-                child: const Icon(Icons.person, size: 50, color: Colors.white),
-              ),
+    return _isLoading
+        ? Center(child: CircularProgressIndicator(color: primaryColor))
+        : SingleChildScrollView(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        children: [
+          CircleAvatar(
+            radius: 45,
+            backgroundColor: primaryColor.withOpacity(0.1),
+            child: CircleAvatar(
+              radius: 40,
+              backgroundColor: primaryColor,
+              child: const Icon(Icons.person, size: 40, color: Colors.white),
             ),
-            const SizedBox(height: 20),
-            Text(_workerName, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: primaryColor)),
-            const SizedBox(height: 5),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
-              child: Text("Saha Görevlisi (Worker)", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue.shade700)),
+          ),
+          const SizedBox(height: 15),
+          Text(
+            _performanceData?.workerFullName ?? "Saha Personeli",
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: primaryColor),
+          ),
+          const SizedBox(height: 5),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(10)),
+            child: Text(
+              "Saha Görevlisi (Worker)",
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue.shade700),
             ),
-            const SizedBox(height: 40),
+          ),
+          const SizedBox(height: 30),
+          if (_performanceData != null)
+            PerformanceDashboardWidget(data: _performanceData!),
 
-            Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-              child: Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), shape: BoxShape.circle),
-                      child: const Icon(Icons.check_circle, size: 36, color: Colors.green),
-                    ),
-                    const SizedBox(width: 20),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text("Tamamlanan Görev", style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 5),
-                        _isLoading
-                            ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.green))
-                            : Text("$_completedTaskCount", style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
-                      ],
-                    ),
-                  ],
-                ),
+          const SizedBox(height: 30),
+          SizedBox(
+            width: double.infinity,
+            height: 55,
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.logout),
+              label: const Text("Sistemden Güvenli Çıkış", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red.shade50,
+                foregroundColor: Colors.red,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: Colors.red.shade200, width: 1.5)),
               ),
+              onPressed: () async {
+                await AuthService().logout();
+                if (!context.mounted) return;
+                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginPage()));
+              },
             ),
-
-            const Spacer(),
-
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.logout),
-                label: const Text("Sistemden Güvenli Çıkış", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red.shade50,
-                  foregroundColor: Colors.red,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: Colors.red.shade200, width: 1.5)
-                  ),
-                ),
-                onPressed: () async {
-                  await AuthService().logout();
-                  if (!context.mounted) return;
-                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginPage()));
-                },
-              ),
-            ),
-            const SizedBox(height: 20),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
