@@ -47,14 +47,13 @@ public class ProductService {
 
         Product savedProduct = productRepository.save(product);
         log.info("Ürün başarıyla eklendi. SKU: {}", savedProduct.getSku());
-
-        stockMovementService.record(savedProduct, savedProduct.getStockQuantity(), StockMovementType.IN, "PRODUCT_CREATED");
+        stockMovementService.record(savedProduct, request.getStockQuantity(), StockMovementType.IN, "Yeni ürün eklendi", "Sistem/Admin", null);
         publishStatisticsUpdate("PRODUCT_CREATED", savedProduct.getId());
         return productMapper.toResponseDto(savedProduct);
     }
 
     @Transactional
-    public ProductResponseDto decreaseStock(Long id, int amount) {
+    public ProductResponseDto decreaseStock(Long id, int amount, String workerInfo, Long taskId) {
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> {
                     log.error("Stok düşürme hatası: Ürün bulunamadı! ID: {}", id);
@@ -75,7 +74,9 @@ public class ProductService {
         log.info("Stok başarıyla düşürüldü. Ürün ID: {}, Kalan Stok: {}", id, product.getStockQuantity());
 
         ProductResponseDto response = productMapper.toResponseDto(productRepository.save(product));
-        stockMovementService.record(product, amount, StockMovementType.OUT, "STOCK_DECREASED");
+        String reason = (taskId != null) ? "QR ile ürün toplandı (Görev İçi)" : "Manuel stok düşümü";
+        stockMovementService.record(product, amount, StockMovementType.OUT, reason, workerInfo, taskId);
+
         publishStatisticsUpdate("STOCK_CHANGED", id);
         return response;
     }
@@ -126,7 +127,10 @@ public class ProductService {
     }
 
     @Transactional
-    public Product increaseStock(Long id, int amount) {
+    public Product increaseStock(Long id, int amount, String workerInfo, Long taskId) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Eklenecek stok miktarı 0'dan büyük olmalıdır.");
+        }
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> {
                     log.error("Stok artırma hatası: Ürün bulunamadı! ID: {}", id);
@@ -141,7 +145,9 @@ public class ProductService {
         }
 
         log.info("Stok başarıyla artırıldı. Ürün ID: {}, Yeni Stok: {}", id, savedProduct.getStockQuantity());
-        stockMovementService.record(savedProduct, amount, StockMovementType.IN, "STOCK_INCREASED");
+        String reason = (taskId != null) ? "Görev iptali / Ürün iadesi" : "Manuel stok artırımı";
+        stockMovementService.record(product, amount, StockMovementType.IN, reason, workerInfo, taskId);
+
         publishStatisticsUpdate("STOCK_CHANGED", id);
         return savedProduct;
     }

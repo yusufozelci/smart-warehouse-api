@@ -4,7 +4,6 @@ import com.smartwarehouse.api.dto.PickTaskRequestDto;
 import com.smartwarehouse.api.dto.PickTaskResponseDto;
 import com.smartwarehouse.api.dto.PickTaskItemRequestDto;
 import com.smartwarehouse.api.entity.PickTask;
-import com.smartwarehouse.api.entity.TaskStatus;
 import com.smartwarehouse.api.entity.Worker;
 import com.smartwarehouse.api.mapper.PickTaskMapper;
 import com.smartwarehouse.api.repository.PickTaskRepository;
@@ -14,11 +13,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -48,7 +47,8 @@ public class    PickTaskController {
     }
 
     @GetMapping("/worker/{workerId}")
-    public ResponseEntity<List<PickTaskResponseDto>> getTasksByWorker(@PathVariable Long workerId) {
+    public ResponseEntity<List<PickTaskResponseDto>> getTasksByWorker(@PathVariable Long workerId, @AuthenticationPrincipal Worker actor) {
+        ensureWorkerAccess(workerId, actor);
         Worker worker = workerRepository.findById(workerId)
                 .orElseThrow(() -> new RuntimeException("Personel bulunamadı!"));
         List<PickTask> tasks = pickTaskService.getPendingTasksForWorker(worker);
@@ -57,14 +57,6 @@ public class    PickTaskController {
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(response);
-    }
-
-    @PutMapping("/{id}/status")
-    public ResponseEntity<PickTask> updateTaskStatus(@PathVariable Long id, @RequestParam TaskStatus status) {
-        return pickTaskRepository.findById(id).map(task -> {
-            task.setStatus(status);
-            return ResponseEntity.ok(pickTaskRepository.save(task));
-        }).orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping("/assign-closest")
@@ -77,13 +69,14 @@ public class    PickTaskController {
     }
 
     @PutMapping("/{id}/complete")
-    public ResponseEntity<PickTaskResponseDto> completeTask(@PathVariable Long id) {
-        PickTaskResponseDto completedTask = pickTaskService.completePickTask(id);
+    public ResponseEntity<PickTaskResponseDto> completeTask(@PathVariable Long id, @AuthenticationPrincipal Worker actor) {
+        PickTaskResponseDto completedTask = pickTaskService.completePickTask(id, actor);
         return ResponseEntity.ok(completedTask);
     }
 
     @GetMapping("/worker/{workerId}/completed")
-    public ResponseEntity<List<PickTaskResponseDto>> getCompletedTasksByWorker(@PathVariable Long workerId) {
+    public ResponseEntity<List<PickTaskResponseDto>> getCompletedTasksByWorker(@PathVariable Long workerId, @AuthenticationPrincipal Worker actor) {
+        ensureWorkerAccess(workerId, actor);
         Worker worker = workerRepository.findById(workerId)
                 .orElseThrow(() -> new RuntimeException("Personel bulunamadı!"));
         List<PickTask> tasks = pickTaskService.getCompletedTasksForWorker(worker);
@@ -97,8 +90,9 @@ public class    PickTaskController {
     @PostMapping("/{taskId}/pick/{productId}")
     public ResponseEntity<PickTaskResponseDto> pickItem(
             @PathVariable Long taskId,
-            @PathVariable Long productId) {
-        PickTaskResponseDto updatedTask = pickTaskService.pickTaskItem(taskId, productId);
+            @PathVariable Long productId,
+            @AuthenticationPrincipal Worker actor) {
+        PickTaskResponseDto updatedTask = pickTaskService.pickTaskItem(taskId, productId, actor);
         return ResponseEntity.ok(updatedTask);
     }
 
@@ -145,8 +139,15 @@ public class    PickTaskController {
     }
 
     @GetMapping("/worker/{workerId}/deleted")
-    public ResponseEntity<List<PickTaskResponseDto>> getDeletedTasksByWorker(@PathVariable Long workerId) {
+    public ResponseEntity<List<PickTaskResponseDto>> getDeletedTasksByWorker(@PathVariable Long workerId, @AuthenticationPrincipal Worker actor) {
+        ensureWorkerAccess(workerId, actor);
         Worker worker = workerRepository.findById(workerId).orElseThrow(() -> new RuntimeException("Personel bulunamadı!"));
         return ResponseEntity.ok(pickTaskService.getDeletedTasksForWorker(worker).stream().map(pickTaskMapper::toResponseDto).collect(Collectors.toList()));
+    }
+
+    private void ensureWorkerAccess(Long workerId, Worker actor) {
+        if (actor.getRole() != com.smartwarehouse.api.entity.Role.ADMIN && !actor.getId().equals(workerId)) {
+            throw new AccessDeniedException("Başka bir personelin görevlerine erişemezsiniz.");
+        }
     }
 }

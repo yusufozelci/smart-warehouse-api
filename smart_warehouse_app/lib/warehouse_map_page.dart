@@ -81,6 +81,7 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
     _animController?.dispose();
     super.dispose();
   }
+
   Map<String, double> _calculateOccupancyRates() {
     if (_shelves.isEmpty) return {'genel': 0.0, 'kat1': 0.0, 'kat2': 0.0, 'kat3': 0.0};
     double maxShelfCapacity = 320.0;
@@ -112,29 +113,6 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
       'kat2': f2Capacity > 0 ? ((f2Weight / f2Capacity) * 100).clamp(0.0, 100.0) : 0.0,
       'kat3': f3Capacity > 0 ? ((f3Weight / f3Capacity) * 100).clamp(0.0, 100.0) : 0.0,
     };
-  }
-
-  List<Map<String, dynamic>> _getWeeklyTaskStats() {
-    List<Map<String, dynamic>> stats = [];
-    DateTime today = DateTime.now();
-
-    for (int i = 6; i >= 0; i--) {
-      DateTime date = today.subtract(Duration(days: i));
-      String dayLabel = DateFormat('E', 'tr').format(date); // Örn: Pzt, Sal
-
-      int createdCount = _tasks.where((t) {
-        if (t.createdAt == null) return false;
-        return t.createdAt!.toLocal().year == date.year && t.createdAt!.toLocal().month == date.month && t.createdAt!.toLocal().day == date.day;
-      }).length;
-
-      int completedCount = _tasks.where((t) {
-        if (t.status != 'COMPLETED' || t.updatedAt == null) return false;
-        return t.updatedAt!.toLocal().year == date.year && t.updatedAt!.toLocal().month == date.month && t.updatedAt!.toLocal().day == date.day;
-      }).length;
-
-      stats.add({'day': dayLabel, 'created': createdCount, 'completed': completedCount});
-    }
-    return stats;
   }
 
   void _sortTaskItems(TaskModel task) {
@@ -1947,11 +1925,10 @@ class _WarehouseMapPageState extends State<WarehouseMapPage> with TickerProvider
                               child: const Text("Ürün Ekle"),
                               onTap: () => _showAddProductToTaskDialog(task),
                             ),
-                            if (isPending)
-                              PopupMenuItem(
-                                child: const Text("İptal Et", style: TextStyle(color: Colors.red)),
-                                onTap: () => _showCancelTaskDialog(task),
-                              ),
+                            PopupMenuItem(
+                              child: const Text("İptal Et", style: TextStyle(color: Colors.red)),
+                              onTap: () => _showCancelTaskDialog(task),
+                            ),
                           ],
                         )
                             : const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey)

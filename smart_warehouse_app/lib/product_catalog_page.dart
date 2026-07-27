@@ -16,6 +16,8 @@ class ProductCatalogPage extends StatefulWidget {
 
 class _ProductCatalogPageState extends State<ProductCatalogPage> {
   List<dynamic> _products = [];
+  final TextEditingController _searchController = TextEditingController();
+  String _searchText = "";
   bool _isLoading = true;
   final Color primaryColor = const Color(0xFF1A237E);
 
@@ -29,6 +31,11 @@ class _ProductCatalogPageState extends State<ProductCatalogPage> {
   void initState() {
     super.initState();
     _fetchProducts();
+    _searchController.addListener(() {
+      setState(() {
+        _searchText = _searchController.text.toLowerCase();
+      });
+    });
   }
 
   Future<void> _fetchProducts() async {
@@ -135,6 +142,29 @@ class _ProductCatalogPageState extends State<ProductCatalogPage> {
   }
 
   @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<dynamic> get filteredProducts {
+    return _products.where((product) {
+      final name =
+      (product['name'] ?? "").toString().toLowerCase();
+
+      final sku =
+      (product['sku'] ?? "").toString().toLowerCase();
+
+      final shelf =
+      (product['shelfCode'] ?? "").toString().toLowerCase();
+
+      return name.contains(_searchText) ||
+          sku.contains(_searchText) ||
+          shelf.contains(_searchText);
+    }).toList();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
@@ -147,35 +177,74 @@ class _ProductCatalogPageState extends State<ProductCatalogPage> {
           ? Center(child: CircularProgressIndicator(color: primaryColor))
           : _products.isEmpty
           ? const Center(child: Text("Sistemde ürün bulunmuyor.", style: TextStyle(fontSize: 18, color: Colors.grey)))
-          : ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _products.length,
-        itemBuilder: (context, index) {
-          final prod = _products[index];
-          return Card(
-            elevation: 2,
-            margin: const EdgeInsets.only(bottom: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-            child: ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: Colors.blue.shade50, shape: BoxShape.circle),
-                child: const Icon(Icons.info_outline, color: Colors.blue),
-              ),
-              title: Text(prod['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 4.0),
-                child: Text("SKU: ${prod['sku']} | Raf: ${prod['shelfCode'] ?? '-'}"),
-              ),
-              trailing: IconButton(
-                icon: const Icon(Icons.edit, color: Colors.blue),
-                tooltip: "Bilgileri Düzenle",
-                onPressed: () => _showEditDialog(prod),
+          : Column(
+        children: [
+
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: "Ürün adı, SKU veya raf kodu ara...",
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
-          );
-        },
-      ),
+          ),
+
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: filteredProducts.length,
+              itemBuilder: (context, index) {
+
+                final prod = filteredProducts[index];
+
+                return Card(
+                  elevation: 2,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: ListTile(
+                    leading: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.info_outline,
+                        color: Colors.blue,
+                      ),
+                    ),
+                    title: Text(
+                      prod['name'],
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        "SKU: ${prod['sku']} | Raf: ${prod['shelfCode'] ?? '-'}",
+                      ),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      onPressed: () => _showEditDialog(prod),
+                    ),
+                  ),
+                );
+
+              },
+            ),
+          ),
+        ],
+      )
     );
   }
 }

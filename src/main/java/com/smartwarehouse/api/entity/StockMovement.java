@@ -1,10 +1,6 @@
 package com.smartwarehouse.api.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -13,8 +9,9 @@ import lombok.EqualsAndHashCode;
 @Entity
 @Table(name = "stock_movements")
 public class StockMovement extends BaseEntity {
-    @Column(nullable = false)
-    private Long productId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_id", nullable = false)
+    private Product product;
 
     @Column(nullable = false)
     private String productName;
@@ -31,4 +28,10 @@ public class StockMovement extends BaseEntity {
 
     @Column(length = 120)
     private String reason;
+
+    @Column(name = "worker_name")
+    private String workerName;
+
+    @Column(name = "task_id")
+    private Long taskId;
 }

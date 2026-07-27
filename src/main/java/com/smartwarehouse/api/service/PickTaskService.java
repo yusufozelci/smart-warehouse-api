@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -33,11 +34,9 @@ public class PickTaskService {
     private final PickTaskMapper pickTaskMapper;
     private final TaskSortingService taskSortingService;
     private final ProductService productService;
-    private final StockMovementService stockMovementService;
 
     @Transactional
     public PickTaskResponseDto createPickTask(PickTaskRequestDto request) {
-
         log.info("Yeni görev oluşturuluyor...");
         PickTask task = new PickTask();
         task.setStatus(TaskStatus.PENDING);
@@ -81,16 +80,10 @@ public class PickTaskService {
     @Transactional
     public PickTaskResponseDto assignClosestTaskToWorker(Long workerId, Long currentShelfId) {
         Worker worker = workerRepository.findById(workerId)
-                .orElseThrow(() -> {
-                    log.error("Görev atama hatası: Personel bulunamadı! ID: {}", workerId);
-                    return new RuntimeException("Personel bulunamadı!");
-                });
+                .orElseThrow(() -> new RuntimeException("Personel bulunamadı!"));
 
         Shelf currentWorkerLocation = shelfRepository.findById(currentShelfId)
-                .orElseThrow(() -> {
-                    log.error("Görev atama hatası: Personelin bulunduğu raf bulunamadı! ID: {}", currentShelfId);
-                    return new RuntimeException("Personelin bulunduğu raf bulunamadı!");
-                });
+                .orElseThrow(() -> new RuntimeException("Personelin bulunduğu raf bulunamadı!"));
 
         List<PickTask> unassignedTasks = pickTaskRepository.findAll().stream()
                 .filter(t -> t.getStatus() == TaskStatus.PENDING)
@@ -99,7 +92,6 @@ public class PickTaskService {
                 .collect(Collectors.toList());
 
         if (unassignedTasks.isEmpty()) {
-            log.warn("Görev atama uyarısı: Sistemde atanacak bekleyen görev bulunmamaktadır.");
             throw new RuntimeException("Sistemde atanacak bekleyen görev bulunmamaktadır.");
         }
 
@@ -121,10 +113,7 @@ public class PickTaskService {
 
         for (Long productId : orderEvent.getProductIds()) {
             Product product = productRepository.findById(productId)
-                    .orElseThrow(() -> {
-                        log.error("Siparişten görev oluşturma hatası: Ürün bulunamadı! ID: {}", productId);
-                        return new RuntimeException("Ürün bulunamadı!");
-                    });
+                    .orElseThrow(() -> new RuntimeException("Ürün bulunamadı!"));
 
             PickTaskItem item = new PickTaskItem();
             item.setProduct(product);
@@ -150,29 +139,28 @@ public class PickTaskService {
     }
 
     @Transactional
-    public PickTaskResponseDto completePickTask(Long taskId) {
+    public PickTaskResponseDto completePickTask(Long taskId, Worker actor) {
         PickTask task = pickTaskRepository.findById(taskId)
-                .orElseThrow(() -> {
-                    log.error("Görev tamamlama hatası: Görev bulunamadı! ID: {}", taskId);
-                    return new RuntimeException("Görev bulunamadı! ID: " + taskId);
-                });
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı! ID: " + taskId));
 
-        if (task.getStatus() == TaskStatus.COMPLETED) {
-            log.warn("Görev tamamlama hatası: Görev zaten tamamlanmış! ID: {}", taskId);
+        ensureWorkerCanOperate(task, actor);
+        if (task.getIsDeleted() || task.getStatus() == TaskStatus.CANCELLED || task.getStatus() == TaskStatus.COMPLETED) {
             throw new RuntimeException("Bu görev zaten tamamlanmış!");
         }
 
         task.setStatus(TaskStatus.COMPLETED);
+        String workerInfo = actor.getFirstName() + " " + actor.getLastName() + " (" + actor.getRole().name() + ")";
 
         for (PickTaskItem item : task.getItems()) {
             if (!item.isPicked()) {
                 item.setPicked(true);
-                productService.decreaseStock(item.getProduct().getId(), item.getQuantity());
+                productService.decreaseStock(item.getProduct().getId(), item.getQuantity(), workerInfo, task.getId());
             }
         }
 
         PickTask savedTask = pickTaskRepository.save(task);
         Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "TASK_COMPLETED");
         payload.put("message", "Görev " + savedTask.getTaskCode() + " tamamlandı!");
         payload.put("boxId", savedTask.getId());
         payload.put("taskId", savedTask.getId());
@@ -190,24 +178,29 @@ public class PickTaskService {
     }
 
     @Transactional
-    public PickTaskResponseDto pickTaskItem(Long taskId, Long productId) {
+    public PickTaskResponseDto pickTaskItem(Long taskId, Long productId, Worker actor) {
         PickTask task = pickTaskRepository.findById(taskId)
-                .orElseThrow(() -> {
-                    log.error("Ürün toplama hatası: Görev bulunamadı! ID: {}", taskId);
-                    return new RuntimeException("Görev bulunamadı!");
-                });
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı!"));
+
+        ensureWorkerCanOperate(task, actor);
+        if (task.getIsDeleted() || task.getStatus() == TaskStatus.CANCELLED || task.getStatus() == TaskStatus.COMPLETED) {
+            throw new IllegalStateException("İptal edilen veya tamamlanan görevden ürün toplanamaz.");
+        }
 
         PickTaskItem itemToPick = task.getItems().stream()
                 .filter(item -> item.getProduct().getId().equals(productId))
                 .findFirst()
-                .orElseThrow(() -> {
-                    log.error("Ürün toplama hatası: Görev içerisinde bu ürün bulunamadı! Ürün ID: {}", productId);
-                    return new RuntimeException("Ürün bulunamadı!");
-                });
+                .orElseThrow(() -> new RuntimeException("Ürün bulunamadı!"));
+
+        if (itemToPick.isPicked()) {
+            return pickTaskMapper.toResponseDto(task);
+        }
 
         itemToPick.setPicked(true);
         pickTaskItemRepository.save(itemToPick);
-        productService.decreaseStock(productId, itemToPick.getQuantity());
+
+        String workerInfo = actor.getFirstName() + " " + actor.getLastName() + " (" + actor.getRole().name() + ")";
+        productService.decreaseStock(productId, itemToPick.getQuantity(), workerInfo, task.getId());
 
         boolean allPicked = task.getItems().stream().allMatch(PickTaskItem::isPicked);
         String productName = itemToPick.getProduct().getName();
@@ -221,6 +214,7 @@ public class PickTaskService {
 
         PickTask savedTask = pickTaskRepository.save(task);
         Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "ITEM_PICKED");
         payload.put("message", statusMessage);
         payload.put("taskId", savedTask.getId());
         payload.put("productId", productId);
@@ -235,15 +229,9 @@ public class PickTaskService {
     @Transactional
     public PickTaskResponseDto assignTaskManually(Long taskId, Long workerId) {
         PickTask task = pickTaskRepository.findById(taskId)
-                .orElseThrow(() -> {
-                    log.error("Manuel atama hatası: Görev bulunamadı! ID: {}", taskId);
-                    return new RuntimeException("Görev bulunamadı!");
-                });
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı!"));
         Worker worker = workerRepository.findById(workerId)
-                .orElseThrow(() -> {
-                    log.error("Manuel atama hatası: Personel bulunamadı! ID: {}", workerId);
-                    return new RuntimeException("Personel bulunamadı!");
-                });
+                .orElseThrow(() -> new RuntimeException("Personel bulunamadı!"));
 
         task.setAssignedWorker(worker);
         PickTask savedTask = pickTaskRepository.save(task);
@@ -255,20 +243,14 @@ public class PickTaskService {
     @Transactional
     public PickTaskResponseDto addItemToTask(Long taskId, PickTaskItemRequestDto itemDto) {
         PickTask task = pickTaskRepository.findById(taskId)
-                .orElseThrow(() -> {
-                    log.error("Ürün ekleme hatası: Görev bulunamadı! ID: {}", taskId);
-                    return new RuntimeException("Görev bulunamadı!");
-                });
+                .orElseThrow(() -> new RuntimeException("Görev bulunamadı!"));
 
         if (task.getStatus() == TaskStatus.COMPLETED) {
             throw new RuntimeException("Tamamlanmış görevlere ürün eklenemiyor!");
         }
 
         Product product = productRepository.findById(itemDto.getProductId())
-                .orElseThrow(() -> {
-                    log.error("Ürün ekleme hatası: Ürün bulunamadı! ID: {}", itemDto.getProductId());
-                    return new RuntimeException("Ürün bulunamadı!");
-                });
+                .orElseThrow(() -> new RuntimeException("Ürün bulunamadı!"));
 
         PickTaskItem newItem = new PickTaskItem();
         newItem.setProduct(product);
@@ -298,6 +280,7 @@ public class PickTaskService {
     public List<PickTask> getDeletedTasksForWorker(Worker worker) {
         return pickTaskRepository.findByAssignedWorkerAndIsDeletedTrueOrderByUpdatedAtDesc(worker);
     }
+
     @Transactional
     public void deleteTask(Long id, String reason, String cancelledBy) {
         PickTask task = pickTaskRepository.findById(id)
@@ -307,9 +290,11 @@ public class PickTaskService {
             throw new RuntimeException("Tamamlanmış görev silinemez/iptal edilemez!");
         }
 
+        String workerInfo = cancelledBy + " (İptal Eden)";
+
         for (PickTaskItem item : task.getItems()) {
             if (item.isPicked()) {
-                productService.increaseStock(item.getProduct().getId(), item.getQuantity());
+                productService.increaseStock(item.getProduct().getId(), item.getQuantity(), workerInfo, id);
                 item.setPicked(false);
             }
         }
@@ -329,6 +314,7 @@ public class PickTaskService {
 
         log.info("Görev silindi/iptal edildi. Stoklar iade edildi. Kodu: {}", task.getTaskCode());
     }
+
     @Transactional
     public PickTaskResponseDto removeItemFromTask(Long taskId, Long productId, String reason, String cancelledBy) {
         PickTask task = pickTaskRepository.findById(taskId)
@@ -342,8 +328,11 @@ public class PickTaskService {
                 .filter(item -> item.getProduct().getId().equals(productId))
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("Görevde bu ürün bulunamadı!"));
+
+        String workerInfo = cancelledBy + " (İptal Eden)";
+
         if (itemToRemove.isPicked()) {
-            productService.increaseStock(productId, itemToRemove.getQuantity());
+            productService.increaseStock(productId, itemToRemove.getQuantity(), workerInfo, taskId);
             itemToRemove.setPicked(false);
         }
 
@@ -386,5 +375,12 @@ public class PickTaskService {
         messagingTemplate.convertAndSend("/topic/manager/tasks", payload);
 
         return pickTaskMapper.toResponseDto(savedTask);
+    }
+
+    private void ensureWorkerCanOperate(PickTask task, Worker actor) {
+        if (actor.getRole() == Role.ADMIN) return;
+        if (task.getAssignedWorker() == null || !task.getAssignedWorker().getId().equals(actor.getId())) {
+            throw new AccessDeniedException("Bu görev için işlem yetkiniz yok.");
+        }
     }
 }

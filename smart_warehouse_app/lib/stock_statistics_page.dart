@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smart_warehouse_app/product_catalog_page.dart';
+import 'package:smart_warehouse_app/widgets/statistics/statistics_dialogs.dart';
 
 import 'models/task_model.dart';
 import 'services/task_service.dart';
@@ -158,6 +160,15 @@ class _StockStatisticsPageState extends State<StockStatisticsPage> with SingleTi
     return quantities.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
   }
 
+  List<dynamic> _criticalProducts() {
+    return _allProducts
+        .where((p) => _number(p['stockQuantity']) <= 10)
+        .toList()
+      ..sort((a, b) =>
+          _number(a['stockQuantity'])
+              .compareTo(_number(b['stockQuantity'])));
+  }
+
   int _criticalStockCount() => _allProducts.where((product) => _number(product['stockQuantity']) <= 10).length;
 
   @override
@@ -246,15 +257,134 @@ class _StockStatisticsPageState extends State<StockStatisticsPage> with SingleTi
     final exits = _number(today['exits']);
     final previousEntries = _number(yesterday['entries']);
     final previousExits = _number(yesterday['exits']);
+    final DateTime now = DateTime.now();
+    final List<dynamic> todayEntriesList = _stockMovements.where((m) =>
+    _sameDay(_movementDate(m), now) && m['type'] == 'IN'
+    ).toList();
+    final List<dynamic> todayExitsList = _stockMovements.where((m) =>
+    _sameDay(_movementDate(m), now) && m['type'] == 'OUT'
+    ).toList();
+
     return LayoutBuilder(builder: (context, constraints) {
       final width = constraints.maxWidth >= 1000 ? (constraints.maxWidth - 60) / 6 : 218.0;
       return Wrap(spacing: 12, runSpacing: 12, children: [
-        SizedBox(width: width, height: 174, child: KpiCard(title: 'Toplam Ürün', value: '$totalProducts', icon: Icons.inventory_2_rounded, color: kAnalyticsPurple, trendLabel: '$totalItemsInStock adet stokta', isPositive: true, progress: _progress(totalProducts == 0 ? 0 : totalItemsInStock / (totalProducts * 100)))),
-        SizedBox(width: width, height: 174, child: KpiCard(title: 'Toplam Raf', value: '$totalShelves', icon: Icons.shelves, color: const Color(0xFF4285F4), trendLabel: 'Kapasite ${totalShelves * 320} kg', isPositive: true, progress: _progress(totalShelves / 100))),
-        SizedBox(width: width, height: 174, child: KpiCard(title: 'Genel Doluluk', value: '%${occupancy.toStringAsFixed(1)}', icon: Icons.pie_chart_rounded, color: const Color(0xFF8E24AA), trendLabel: 'Kapasite kullanımı', isPositive: occupancy <= 80, progress: occupancy / 100)),
-        SizedBox(width: width, height: 174, child: KpiCard(title: 'Kritik Stok', value: '${_criticalStockCount()}', icon: Icons.warning_amber_rounded, color: const Color(0xFFD93025), trendLabel: '10 adet ve altı ürünler', isPositive: _criticalStockCount() == 0, progress: _progress(_criticalStockCount() / max(1, _allProducts.length)))),
-        SizedBox(width: width, height: 174, child: KpiCard(title: 'Bugünkü Stok Girişi', value: '$entries', icon: Icons.move_to_inbox_rounded, color: const Color(0xFF00A896), trendLabel: _trendText(entries, previousEntries), isPositive: entries >= previousEntries, progress: _progress(entries / 100))),
-        SizedBox(width: width, height: 174, child: KpiCard(title: 'Bugünkü Stok Çıkışı', value: '$exits', icon: Icons.outbox_rounded, color: const Color(0xFFE53935), trendLabel: _trendText(exits, previousExits), isPositive: exits <= previousExits, progress: _progress(exits / 100))),
+        SizedBox(width: width, height: 174, child: KpiCard(
+          title: 'Toplam Ürün',
+          value: '$totalProducts',
+          icon: Icons.inventory_2_rounded,
+          color: kAnalyticsPurple,
+          trendLabel: '$totalItemsInStock adet stokta',
+          isPositive: true,
+          progress: _progress(
+            totalProducts == 0
+                ? 0
+                : totalItemsInStock / (totalProducts * 100),
+          ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const ProductCatalogPage(),
+              ),
+            );
+          },
+        ),
+        ),
+        SizedBox(width: width, height: 174, child: KpiCard(
+          title: 'Toplam Raf',
+          value: '$totalShelves',
+          icon: Icons.shelves,
+          color: const Color(0xFF4285F4),
+          trendLabel: 'Kapasite ${totalShelves * 320} kg',
+          isPositive: true,
+          progress: _progress(totalShelves / 100),
+          onTap: () {
+            StatisticsDialogs.showShelves(
+              context: context,
+              shelves: _shelves,
+              allProducts: _allProducts,
+            );
+          },
+        )
+        ),
+        SizedBox(
+          width: width,
+          height: 174,
+          child: KpiCard(
+            title: 'Genel Doluluk',
+            value: '%${occupancy.toStringAsFixed(1)}',
+            icon: Icons.pie_chart_rounded,
+            color: const Color(0xFF8E24AA),
+            trendLabel: 'Kapasite kullanımı',
+            isPositive: occupancy <= 80,
+            progress: occupancy / 100,
+            onTap: () {
+              StatisticsDialogs.showGeneralOccupancy(
+                context: context,
+                shelves: _shelves,
+                allProducts: _allProducts,
+              );
+            },
+          ),
+        ),
+        SizedBox(width: width, height: 174, child: KpiCard(
+          title: 'Kritik Stok',
+          value: '${_criticalStockCount()}',
+          icon: Icons.warning_amber_rounded,
+          color: const Color(0xFFD93025),
+          trendLabel: '10 adet ve altı ürünler',
+          isPositive: _criticalStockCount() == 0,
+          progress: _progress(
+            _criticalStockCount() / max(1, _allProducts.length),
+          ),
+          onTap: () {
+            StatisticsDialogs.showCriticalStock(
+              context: context,
+              products: _criticalProducts(),
+            );
+          },
+        ),
+        ),
+        SizedBox(
+          width: width,
+          height: 174,
+          child: KpiCard(
+            title: 'Bugünkü Stok Girişi',
+            value: '$entries',
+            icon: Icons.move_to_inbox_rounded,
+            color: const Color(0xFF00A896),
+            trendLabel: _trendText(entries, previousEntries),
+            isPositive: entries >= previousEntries,
+            progress: _progress(entries / 100),
+            onTap: () {
+              StatisticsDialogs.showTodayStockEntries(
+                context: context,
+                todayEntries: todayEntriesList,
+                yesterdayEntryCount: previousEntries,
+              );
+            },
+          ),
+        ),
+        SizedBox(
+          width: width,
+          height: 174,
+          child: KpiCard(
+            title: 'Bugünkü Stok Çıkışı',
+            value: '$exits',
+            icon: Icons.outbox_rounded,
+            color: const Color(0xFFE53935),
+            trendLabel: _trendText(exits, previousExits),
+            isPositive: exits <= previousExits,
+            progress: _progress(exits / 100),
+            onTap: () {
+              StatisticsDialogs.showTodayStockExits(
+                context: context,
+                todayExits: todayExitsList,
+                yesterdayExitCount: previousExits,
+              );
+            },
+          ),
+        )
       ]);
     });
   }

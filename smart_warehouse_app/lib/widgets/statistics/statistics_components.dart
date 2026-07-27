@@ -251,8 +251,18 @@ class _LegendDot extends StatelessWidget {
 }
 
 class KpiCard extends StatefulWidget {
-  const KpiCard({super.key, required this.title, required this.value, required this.icon, required this.color, required this.trendLabel, required this.isPositive, required this.progress});
-  final String title; final String value; final IconData icon; final Color color; final String trendLabel; final bool isPositive; final double progress;
+  const KpiCard({
+    super.key,
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.color,
+    required this.trendLabel,
+    required this.isPositive,
+    required this.progress,
+    this.onTap,
+  });
+  final String title; final String value; final IconData icon; final Color color; final String trendLabel; final bool isPositive; final double progress; final VoidCallback? onTap;
 
   @override
   State<KpiCard> createState() => _KpiCardState();
@@ -263,11 +273,20 @@ class _KpiCardState extends State<KpiCard> {
 
   @override
   Widget build(BuildContext context) {
-    final trendColor = widget.isPositive ? const Color(0xFF0F9D58) : const Color(0xFFD93025);
+    final trendColor =
+    widget.isPositive ? const Color(0xFF0F9D58) : const Color(0xFFD93025);
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: AnimatedContainer(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              widget.onTap?.call();
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
         transform: Matrix4.translationValues(0, _hovered ? -4 : 0, 0),
@@ -300,7 +319,9 @@ class _KpiCardState extends State<KpiCard> {
             ClipRRect(borderRadius: BorderRadius.circular(99), child: LinearProgressIndicator(value: widget.progress.clamp(0, 1).toDouble(), minHeight: 5, backgroundColor: widget.color.withOpacity(.1), valueColor: AlwaysStoppedAnimation(widget.color))),
           ],
         ),
-      ),
+         ),
+        ),
+        ),
     );
   }
 }

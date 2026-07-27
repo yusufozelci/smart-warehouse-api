@@ -27,4 +27,11 @@ public interface PickTaskRepository extends JpaRepository<PickTask, Long> {
 
     @EntityGraph(attributePaths = {"items", "items.product", "items.product.shelf", "assignedWorker"})
     List<PickTask> findAllByOrderByCreatedAtDesc();
+    long countByAssignedWorkerIdAndStatusAndIsDeletedFalse(Long workerId, TaskStatus status);
+    long countByAssignedWorkerIdAndIsDeletedFalse(Long workerId);
+    @Query("SELECT COALESCE(SUM(i.quantity), 0) FROM PickTask t JOIN t.items i WHERE t.assignedWorker.id = :workerId AND i.isPicked = true AND t.isDeleted = false")
+    long sumPickedItemsByWorkerId(@org.springframework.data.repository.query.Param("workerId") Long workerId);
+
+    @Query("SELECT t FROM PickTask t WHERE t.assignedWorker.id = :workerId AND t.status = 'COMPLETED' AND t.isDeleted = false AND t.updatedAt >= :startDate")
+    List<PickTask> findCompletedTasksSince(@org.springframework.data.repository.query.Param("workerId") Long workerId, @org.springframework.data.repository.query.Param("startDate") java.time.LocalDateTime startDate);
 }
